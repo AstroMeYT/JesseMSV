@@ -12,6 +12,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons for Web Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- HLS.js for Live Video Stream Support -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -81,7 +83,7 @@
             <div class="w-full max-w-sm flex flex-col gap-2 drop-shadow-lg">
                 <!-- Sleek Speech Bubble line -->
                 <div id="speech-bubble" class="text-xs text-white/95 font-light leading-relaxed bg-black/40 backdrop-blur-md px-3.5 py-2 rounded-lg border border-white/5 inline-block self-start shadow-md">
-                    Ask me anything! Say "Jesse, play country music"
+                    Ask me anything! Say "Jesse, play country music" or "watch Bloomberg TV"
                 </div>
                 <!-- Sleek Borderless Input Bar -->
                 <div class="flex gap-2 w-full">
@@ -109,9 +111,26 @@
 
     </div>
 
+    <!-- LIVE VIDEO STREAM OVERLAY (Hidden by default) -->
+    <div id="video-overlay" class="fixed inset-0 z-40 bg-black/85 backdrop-blur-md hidden flex-col items-center justify-center p-6 transition-opacity duration-500 opacity-0 hide-on-sleep">
+        <div class="w-full max-w-5xl relative flex flex-col items-center drop-shadow-2xl">
+            <div class="w-full flex justify-between items-center mb-4">
+                <div class="text-cyan-400 font-bold tracking-wider uppercase text-sm flex items-center gap-3">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]"></span>
+                    Live Broadcast: <span id="video-title" class="text-white ml-1"></span>
+                </div>
+                <button id="close-video-btn" class="text-gray-400 hover:text-white bg-white/10 hover:bg-white/20 p-2.5 rounded-xl transition-all">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <!-- Universal Media Player -->
+            <video id="main-media-player" class="w-full aspect-video rounded-2xl shadow-[0_0_50px_rgba(0,229,255,0.15)] bg-black/50 border border-white/10 object-contain" controls playsinline></video>
+        </div>
+    </div>
+
     <!-- RIGHT HAND CONTROL DRAWER (Slide-out menu - Now Slimmer) -->
-    <div id="control-drawer" class="fixed top-0 right-0 h-full w-[360px] max-w-full bg-black/92 backdrop-blur-xl border-l border-white/10 shadow-2xl z-20 translate-x-full transition-transform duration-300 ease-in-out p-6 flex flex-col justify-between hide-on-sleep">
-        
+    <div id="control-drawer" class="fixed top-0 right-0 h-full w-[360px] max-w-full bg-black/92 backdrop-blur-xl border-l border-white/10 shadow-2xl z-50 translate-x-full transition-transform duration-300 ease-in-out p-6 flex flex-col justify-between hide-on-sleep">
+
         <div>
             <!-- Header -->
             <div class="flex justify-between items-center border-b border-white/10 pb-3 mb-4">
@@ -161,6 +180,7 @@
                             <li>"Jesse, write a note to buy flowers"</li>
                             <li>"Jesse, set timer for 1 minute 30 seconds"</li>
                             <li>"Jesse, play 104.3 The Party"</li>
+                            <li>"Jesse, watch NASA TV"</li>
                         </ul>
                     </div>
                 </div>
@@ -270,7 +290,7 @@
         let timerSecondsLeft = 0;
         let timerInterval = null;
         let radioPlaying = false;
-        let radioAudio = null;
+        let hlsPlayer = null; // HLS.js instance tracker
         let currentRadioUrl = "https://icecast.walmradio.com:8000/classic";
         let currentRadioName = "Classic FM stream";
         let isSleepMode = false;
@@ -460,8 +480,17 @@
         }, 15 * 60 * 1000);
 
         function rotateBackground() {
-            currentWallpaperIndex = (currentWallpaperIndex + 1) % scenicWallpapers.length;
-            bgCarrier.style.backgroundImage = `url('${scenicWallpapers[currentWallpaperIndex]}')`;
+            const nextIndex = (currentWallpaperIndex + 1) % scenicWallpapers.length;
+            const nextImageUrl = scenicWallpapers[nextIndex];
+            
+            // Create a temporary image object to preload the next wallpaper
+            const preloader = new Image();
+            preloader.onload = () => {
+                // Only switch the background after it has successfully downloaded to the cache
+                currentWallpaperIndex = nextIndex;
+                bgCarrier.style.backgroundImage = `url('${nextImageUrl}')`;
+            };
+            preloader.src = nextImageUrl;
         }
         setInterval(rotateBackground, 10000);
 
@@ -503,12 +532,7 @@
 
         function speak(text) {
             if (!synth) return;
-            
-            // Fixes the 15-second Chrome freeze bug by ensuring we only cancel if it's actively processing audio
-            if (synth.speaking || synth.pending) {
-                synth.cancel(); 
-            }
-            
+            synth.cancel(); 
             const utterance = new SpeechSynthesisUtterance(text);
             const selectedVoice = voices.find(v => v.name === selectedVoiceName);
             if (selectedVoice) {
@@ -555,27 +579,22 @@
 
             recognition.onerror = (e) => {
                 console.warn("Speech recognition error:", e.error);
-                // Catch fatal errors to break the infinite crash loop when hosted remotely
-                if (['not-allowed', 'service-not-allowed', 'audio-capture', 'network'].includes(e.error)) {
+                if (e.error === 'not-allowed') {
                     autoListen = false;
                     isListening = false;
                     micTriggerBtn.style.opacity = '0.5';
-                    micBtnText.textContent = "MIC ERROR";
-                    appendLog(`[Mic Error: ${e.error}]`);
+                    micBtnText.textContent = "MIC DENIED";
                 }
-                // Note: 'no-speech' is a normal ambient timeout that we intentionally ignore so it can restart.
             };
 
             recognition.onend = () => {
                 isListening = false;
                 if (autoListen) {
-                    // Increased delay to 1000ms. Browsers rate-limit immediate microphone restarts 
-                    // on live servers to prevent spam. A full second gives the browser time to clear the buffer.
                     setTimeout(() => {
                         if (autoListen && !isListening) {
                             try { recognition.start(); } catch(e) {}
                         }
-                    }, 1000);
+                    }, 250);
                 } else {
                     micTriggerBtn.classList.add('bg-red-600', 'hover:bg-red-500');
                     micTriggerBtn.classList.remove('bg-cyan-500', 'hover:bg-cyan-400', 'text-black');
@@ -595,7 +614,6 @@
                     ? /\b(jesse|jessie|jessy)\b/i 
                     : new RegExp(`\\b${wakeword}\\b`, 'i');
 
-                // Process if wakeword is heard, OR if actively waiting for a reply
                 if (wakewordRegex.test(speechResult) || trainingMode || awaitingNoteContent || awaitingCommand) {
                     appendLog(`Heard: "${speechResult}"`);
                     handleCommand(speechResult);
@@ -611,11 +629,6 @@
                         } else if (permissionStatus.state === 'denied') {
                             micTriggerBtn.style.opacity = '0.5';
                             micBtnText.textContent = "MIC DENIED";
-                        } else {
-                            // Automatically prompt for microphone access on startup if not yet granted/denied
-                            // The Web Speech API triggers this natively without causing hardware lock race conditions
-                            autoListen = true;
-                            try { recognition.start(); } catch(e) {}
                         }
                         
                         permissionStatus.onchange = () => {
@@ -841,8 +854,8 @@
                 return;
             }
 
-            // 2. Weather
-            if (/\b(weather|temperature|forecast)\b/i.test(cleanCmd)) {
+            // 2. Weather (Ignore if user is trying to "watch" or "play" a weather TV/Radio station)
+            if (/\b(weather|temperature|forecast)\b/i.test(cleanCmd) && !/\b(watch|play|stream|tv)\b/i.test(cleanCmd)) {
                 if (currentWeatherState.temp !== null) {
                     speak(`The current weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees Fahrenheit and ${currentWeatherState.condition}.`);
                 } else {
@@ -923,16 +936,30 @@
                 return;
             }
 
-            // 7. Dynamic Internet Radio API
+            // 7. Dynamic Internet TV
+            if (/\b(watch|tv|channel|video)\b/i.test(cleanCmd) && !cleanCmd.includes("flip")) {
+                if (/\b(stop|pause|turn off)\b/i.test(cleanCmd)) {
+                    stopRadio();
+                    speak("TV playback stopped.");
+                } else {
+                    let query = cleanCmd.replace(/.*?(watch)\s+/i, "").trim();
+                    if (query === cleanCmd || query === "tv" || query === "video") {
+                        query = "nasa"; 
+                    }
+                    playInternetTV(query);
+                }
+                return;
+            }
+
+            // 7.5 Dynamic Internet Radio
             if (/\b(radio|music|stream|play|listen to)\b/i.test(cleanCmd) && !cleanCmd.includes("flip")) {
                 if (/\b(stop|pause|turn off)\b/i.test(cleanCmd)) {
                     stopRadio();
                     speak("Radio playback stopped.");
                 } else {
-                    // Extract query (e.g. "play country music" -> "country music")
                     let query = cleanCmd.replace(/.*?(play|listen to|stream)\s+/i, "").trim();
                     if(query === cleanCmd || query === "music" || query === "radio") {
-                        query = "classic fm"; // Default fallback
+                        query = "classic fm"; 
                     }
                     playDynamicRadio(query);
                 }
@@ -983,20 +1010,79 @@
         }
 
         // ==============================================================================
-        // DYNAMIC RADIO BROWSER API & AUDIO CONTROL
+        // DYNAMIC RADIO BROWSER API & AUDIO/VIDEO CONTROL
         // ==============================================================================
+        const videoOverlay = document.getElementById('video-overlay');
+        const mainMediaPlayer = document.getElementById('main-media-player');
+        const videoTitle = document.getElementById('video-title');
+        const closeVideoBtn = document.getElementById('close-video-btn');
+
+        async function playInternetTV(query) {
+            speak(`Searching public directories for ${query}...`);
+            let cleanQuery = query.replace(/\b(tv|channel|network|watch)\b/gi, '').trim().toLowerCase();
+            
+            // LEGAL COMPLIANCE: We only hardcode explicitly Public Domain or official open streams.
+            // U.S. Government works (like NASA) are strictly in the public domain.
+            const safeChannels = {
+                "nasa": { name: "NASA TV", url: "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8" },
+                "space": { name: "NASA TV", url: "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8" }
+            };
+
+            let foundChannel = null;
+            for (const [key, channel] of Object.entries(safeChannels)) {
+                if (cleanQuery.includes(key) || key.includes(cleanQuery)) {
+                    foundChannel = channel;
+                    break;
+                }
+            }
+
+            if (foundChannel) {
+                speak(`Tuning into ${foundChannel.name}.`);
+                startRadio(foundChannel.url, foundChannel.name);
+            } else {
+                // TV Specific Fallback: Broaden the search to maximize finding community streams
+                try {
+                    const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
+                    
+                    // 1st Attempt: Search for the specific name AND require the 'video' tag
+                    let res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}&tag=video`);
+                    let data = await res.json();
+                    
+                    // 2nd Attempt: Search for the name with "tv" attached (e.g., "Bloomberg TV")
+                    if (!data || data.length === 0) {
+                        res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery + " tv")}`);
+                        data = await res.json();
+                    }
+
+                    // 3rd Attempt: Just search the raw name (May fall back to an audio-only simulcast of the TV network)
+                    if (!data || data.length === 0) {
+                        res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}`);
+                        data = await res.json();
+                    }
+
+                    if (data && data.length > 0) {
+                        const station = data[0];
+                        startRadio(station.url_resolved, station.name);
+                        speak(`Tuning into ${station.name}.`);
+                    } else {
+                        speak(`I couldn't find a public video broadcast for ${query}.`);
+                    }
+                } catch(e) {
+                    console.warn("TV API Error:", e);
+                    speak("I had trouble connecting to the public broadcast network.");
+                }
+            }
+        }
+
         async function playDynamicRadio(query) {
             try {
-                speak(`Searching for ${query} radio...`);
-                // Clean the query slightly for better API results
-                let cleanQuery = query.replace(/\b(music|radio|station)\b/gi, '').trim();
+                speak(`Searching for ${query}...`);
+                let cleanQuery = query.replace(/\b(music|radio|station|channel|news)\b/gi, '').trim();
                 
-                // Fetch from the free global Radio Browser API using the load-balanced 'all' endpoint for faster speeds
                 const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
                 let res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}`);
                 let data = await res.json();
                 
-                // Fallback to searching by tag (genre) if specific name isn't found
                 if (!data || data.length === 0) {
                     let tagRes = await fetch(`${apiUrl}&tagList=${encodeURIComponent(cleanQuery)}`);
                     data = await tagRes.json();
@@ -1007,51 +1093,63 @@
                     startRadio(station.url_resolved, station.name);
                     speak(`Tuning into ${station.name}.`);
                 } else {
-                    speak(`I couldn't find a radio station matching ${query}.`);
+                    speak(`I couldn't find a broadcast matching ${query}.`);
                 }
             } catch(e) {
                 console.warn("Radio API Error:", e);
-                speak("I had trouble connecting to the radio network. Trying default station.");
+                speak("I had trouble connecting to the broadcast network. Trying default station.");
                 startRadio("https://icecast.walmradio.com:8000/classic", "Classic FM");
             }
         }
 
         function startRadio(url, name) {
-            if (radioAudio) {
-                radioAudio.pause();
-            }
+            stopRadio(); // Stop any existing playback first
             currentRadioUrl = url;
             currentRadioName = name;
+            videoTitle.textContent = name;
             
-            radioAudio = new Audio(url);
-            radioAudio.play().then(() => {
-                radioPlaying = true;
-                
-                document.getElementById('radio-station').textContent = currentRadioName;
-                document.getElementById('radio-status').textContent = "Status: Playing";
-                document.getElementById('radio-icon').setAttribute('data-lucide', 'square');
-                document.getElementById('radio-toggle-btn').classList.remove('bg-cyan-500');
-                document.getElementById('radio-toggle-btn').classList.add('bg-red-500');
-                lucide.createIcons();
-                appendLog(`[Radio Tuned: ${name}]`);
-            }).catch(e => {
-                console.warn("Playback failed", e);
-                speak("I was unable to open the radio stream. Please try again.");
-            });
+            // Check if it's an HLS stream (m3u8) and use hls.js if supported
+            if (window.Hls && Hls.isSupported() && url.toLowerCase().includes('m3u8')) {
+                hlsPlayer = new Hls();
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(mainMediaPlayer);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, function() {
+                    mainMediaPlayer.play().catch(e => console.warn("Autoplay blocked", e));
+                });
+            } else {
+                // Standard fallback for MP3/AAC/MP4/WebM streams
+                mainMediaPlayer.src = url;
+                mainMediaPlayer.play().catch(e => console.warn("Autoplay blocked", e));
+            }
+
+            radioPlaying = true;
+            document.getElementById('radio-station').textContent = currentRadioName;
+            document.getElementById('radio-status').textContent = "Status: Playing";
+            document.getElementById('radio-icon').setAttribute('data-lucide', 'square');
+            document.getElementById('radio-toggle-btn').classList.remove('bg-cyan-500');
+            document.getElementById('radio-toggle-btn').classList.add('bg-red-500');
+            lucide.createIcons();
+            appendLog(`[Broadcast Tuned: ${name}]`);
         }
 
         function stopRadio() {
-            if (radioAudio) {
-                radioAudio.pause();
-                radioAudio = null;
+            if (hlsPlayer) {
+                hlsPlayer.destroy();
+                hlsPlayer = null;
             }
+            mainMediaPlayer.pause();
+            mainMediaPlayer.removeAttribute('src');
+            mainMediaPlayer.load();
+            
             radioPlaying = false;
+            hideVideoOverlay();
+
             document.getElementById('radio-status').textContent = "Status: Idle";
             document.getElementById('radio-icon').setAttribute('data-lucide', 'play');
             document.getElementById('radio-toggle-btn').classList.remove('bg-red-500');
             document.getElementById('radio-toggle-btn').classList.add('bg-cyan-500');
             lucide.createIcons();
-            appendLog("[Radio Stopped]");
+            appendLog("[Broadcast Stopped]");
         }
 
         document.getElementById('radio-toggle-btn').addEventListener('click', () => {
@@ -1061,6 +1159,37 @@
                 stopRadio();
             }
         });
+
+        // Automatically detect if the stream contains a Video track!
+        mainMediaPlayer.addEventListener('loadedmetadata', () => {
+            if (mainMediaPlayer.videoWidth > 0 && mainMediaPlayer.videoHeight > 0) {
+                showVideoOverlay();
+            } else {
+                hideVideoOverlay();
+            }
+        });
+
+        function showVideoOverlay() {
+            videoOverlay.classList.remove('hidden');
+            setTimeout(() => {
+                videoOverlay.classList.remove('opacity-0');
+                videoOverlay.classList.add('opacity-100');
+            }, 50);
+        }
+
+        function hideVideoOverlay() {
+            videoOverlay.classList.remove('opacity-100');
+            videoOverlay.classList.add('opacity-0');
+            setTimeout(() => {
+                videoOverlay.classList.add('hidden');
+            }, 500);
+        }
+
+        closeVideoBtn.addEventListener('click', () => {
+            stopRadio();
+            speak("Video stream closed.");
+        });
+
 
         // ==============================================================================
         // WIKIPEDIA, TIMERS, & UI UTILITIES
