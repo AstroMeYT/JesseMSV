@@ -13,6 +13,7 @@ A better version of the Jesse Assistant
 - Play internet radio ("start the radio" or similar, then say the genre to play when asked)
 - Read Wikipedia article summaries ("Open Wikipedia" or similar)
 - Set a new wakework (Default is Jesse, "Train wakeword", then say the new wakeword when prompted)
+- Set a new voice (Default is Tenor, "Set voice" or similar, then say the voice you want to choose. Each voice will read a sentence)
 
 ## How to Use Jesse
 
