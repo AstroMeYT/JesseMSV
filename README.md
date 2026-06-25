@@ -30,4 +30,4 @@ To set up on iOS 26 and above, go to the link above, and click the share button 
 
 ### Android 5.0+
 
-Download the WebView Kiosk app, and set the URL to the lnk above. Then, click the settings icon in the bottom coner, and set the app to "Fullscreen" or similar. You can even go as far as to setting the app as your launcher.
+Download the WebView Kiosk app, and set the URL to the lnk above. Then, click the settings icon in the bottom coner, and set the app to "Lock" or similar. You can even go as far as to setting the app as your launcher.
