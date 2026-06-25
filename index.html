@@ -503,7 +503,12 @@
 
         function speak(text) {
             if (!synth) return;
-            synth.cancel(); 
+            
+            // Fixes the 15-second Chrome freeze bug by ensuring we only cancel if it's actively processing audio
+            if (synth.speaking || synth.pending) {
+                synth.cancel(); 
+            }
+            
             const utterance = new SpeechSynthesisUtterance(text);
             const selectedVoice = voices.find(v => v.name === selectedVoiceName);
             if (selectedVoice) {
@@ -550,22 +555,27 @@
 
             recognition.onerror = (e) => {
                 console.warn("Speech recognition error:", e.error);
-                if (e.error === 'not-allowed') {
+                // Catch fatal errors to break the infinite crash loop when hosted remotely
+                if (['not-allowed', 'service-not-allowed', 'audio-capture', 'network'].includes(e.error)) {
                     autoListen = false;
                     isListening = false;
                     micTriggerBtn.style.opacity = '0.5';
-                    micBtnText.textContent = "MIC DENIED";
+                    micBtnText.textContent = "MIC ERROR";
+                    appendLog(`[Mic Error: ${e.error}]`);
                 }
+                // Note: 'no-speech' is a normal ambient timeout that we intentionally ignore so it can restart.
             };
 
             recognition.onend = () => {
                 isListening = false;
                 if (autoListen) {
+                    // Increased delay to 1000ms. Browsers rate-limit immediate microphone restarts 
+                    // on live servers to prevent spam. A full second gives the browser time to clear the buffer.
                     setTimeout(() => {
                         if (autoListen && !isListening) {
                             try { recognition.start(); } catch(e) {}
                         }
-                    }, 250);
+                    }, 1000);
                 } else {
                     micTriggerBtn.classList.add('bg-red-600', 'hover:bg-red-500');
                     micTriggerBtn.classList.remove('bg-cyan-500', 'hover:bg-cyan-400', 'text-black');
@@ -601,6 +611,11 @@
                         } else if (permissionStatus.state === 'denied') {
                             micTriggerBtn.style.opacity = '0.5';
                             micBtnText.textContent = "MIC DENIED";
+                        } else {
+                            // Automatically prompt for microphone access on startup if not yet granted/denied
+                            // The Web Speech API triggers this natively without causing hardware lock race conditions
+                            autoListen = true;
+                            try { recognition.start(); } catch(e) {}
                         }
                         
                         permissionStatus.onchange = () => {
@@ -976,8 +991,8 @@
                 // Clean the query slightly for better API results
                 let cleanQuery = query.replace(/\b(music|radio|station)\b/gi, '').trim();
                 
-                // Fetch from the free global Radio Browser API
-                const apiUrl = `https://de1.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
+                // Fetch from the free global Radio Browser API using the load-balanced 'all' endpoint for faster speeds
+                const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
                 let res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}`);
                 let data = await res.json();
                 
