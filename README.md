@@ -1,6 +1,6 @@
 # JesseMSV
 
-A better version of the Jesse Assistant. Requires the ```main.py``` server to be running to use local speech-to-text.
+A better version of the Jesse Assistant. Requires the ```main.py``` server to be running to use local speech-to-text. Made for embedded devices with screens (doesn't need one, but it is nice).
 
 ## Capabilities
 
@@ -28,10 +28,9 @@ Jesse can be acessed [HERE](https://astromeyt.github.io/JesseMSV)
 
 ## Setting up for Stationary Devices
 
-### iOS 26+
+### Linux
 
-To set up on iOS 26 and above, go to the link above, and click the share button in the top right. Click "Add to Homescreen", and toggle "View as Web App" or similar. This will add it to the homescreen. Then, go to settings and turn off screen shutoff.
+Make sure to have a desktop environment installed, run ```pip install flask flask-cors faster-whisper numpy``` in the terminal, and add these to startup commands:
 
-### Android 5.0+
-
-Download the WebView Kiosk app, and set the URL to the lnk above. Then, click the settings icon in the bottom coner, and set the app to "Lock" or similar. You can even go as far as to setting the app as your launcher.
+- ```YOUR_BROWSER --kiosk path/to/index.html```
+- ```python3 path/to/main.py```
