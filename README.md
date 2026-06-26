@@ -175,7 +175,8 @@ Action: Connects to a free API to fetch clean, family-friendly humor.
 VLC NameError ("no function 'libvlc_new'"):
 Ensure you have installed the actual VLC Media Player application on your
 operating system level. python-vlc is only a wrapper and requires the physical
-libvlc.so shared system library.
+libvlc.so shared system library. If you still see that is it installed, make
+sure that it is a system package and not a Flatpak package.
 
 Segfaults when running --gui:
 Ensure your desktop environment is loaded and running. Systemd services running
