@@ -5,6 +5,8 @@
 # This script detects your OS, installs system audio dependencies, sets up a 
 # Python virtual environment, downloads the requested GitHub files, and sets 
 # up a systemd service to run the assistant automatically on boot.
+#
+# PIPE-SAFE: Uses </dev/tty to allow interactive prompt inputs when curl'd.
 # ==============================================================================
 
 # Terminal Colors
@@ -22,12 +24,12 @@ echo -e "${GREEN}       JESSE SMART ASSISTANT - AUTO INSTALLER          ${NC}"
 echo -e "${CYAN}=======================================================${NC}"
 echo ""
 
-# 1. Ask user for installation type
+# 1. Ask user for installation type (Redirected input to /dev/tty for pipe safety)
 echo -e "${YELLOW}Which version of the assistant would you like to install?${NC}"
 echo "  1) Web GUI Version (HTML Interface + Python STT Server)"
 echo "  2) Headless Version (Voice & Sound Only)"
 echo ""
-read -p "Enter choice [1 or 2]: " INSTALL_CHOICE
+read -p "Enter choice [1 or 2]: " INSTALL_CHOICE < /dev/tty
 
 if [[ "$INSTALL_CHOICE" != "1" && "$INSTALL_CHOICE" != "2" ]]; then
     echo -e "${RED}Invalid choice. Exiting.${NC}"
@@ -36,31 +38,31 @@ fi
 
 # 2. Check for sudo privileges upfront
 echo -e "\n${CYAN}[1/5] Checking system permissions...${NC}"
-if ! sudo -v &> /dev/null; then
+if ! sudo -v &>/dev/null; then
     echo -e "${RED}You need sudo privileges to install system packages and services. Exiting.${NC}"
     exit 1
 fi
 
 # 3. Detect Package Manager and Install System Dependencies
 echo -e "\n${CYAN}[2/5] Detecting Package Manager & Installing System Dependencies...${NC}"
-echo "We need to install PortAudio (for PyAudio) and VLC (for radio streaming)."
+echo "We need to install PortAudio (for PyAudio), VLC (for radio streaming), and Tkinter (for GUI)."
 
 if command -v apt-get >/dev/null; then
     echo -e "${GREEN}Debian/Ubuntu/Raspberry Pi OS detected.${NC}"
     sudo apt-get update
-    sudo apt-get install -y python3 python3-pip python3-venv wget curl vlc libportaudio2 libportaudiocpp0 portaudio19-dev python3-pyaudio espeak ffmpeg
+    sudo apt-get install -y python3 python3-pip python3-venv wget curl vlc libportaudio2 libportaudiocpp0 portaudio19-dev python3-pyaudio espeak ffmpeg python3-tk
 elif command -v pacman >/dev/null; then
     echo -e "${GREEN}Arch Linux detected.${NC}"
-    sudo pacman -Sy --noconfirm python python-pip wget curl vlc portaudio python-pyaudio espeak-ng ffmpeg
+    sudo pacman -Sy --noconfirm python python-pip wget curl vlc portaudio python-pyaudio espeak-ng ffmpeg tk
 elif command -v dnf >/dev/null; then
     echo -e "${GREEN}Fedora detected.${NC}"
-    sudo dnf install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg
+    sudo dnf install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tkinter
 elif command -v zypper >/dev/null; then
     echo -e "${GREEN}openSUSE detected.${NC}"
-    sudo zypper install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg
+    sudo zypper install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tk
 else
-    echo -e "${RED}Unsupported package manager. Please manually install: portaudio development headers, vlc, python3-venv, and ffmpeg.${NC}"
-    read -p "Press Enter to attempt continuing anyway, or Ctrl+C to abort..."
+    echo -e "${RED}Unsupported package manager. Please manually install: portaudio development headers, vlc, python3-venv, ffmpeg, and python3-tk.${NC}"
+    read -p "Press Enter to attempt continuing anyway, or Ctrl+C to abort..." < /dev/tty
 fi
 
 # 4. Setup Directory and Virtual Environment
@@ -73,7 +75,7 @@ source "$VENV_DIR/bin/activate"
 
 echo -e "${YELLOW}Installing Python packages via pip (this may take a minute)...${NC}"
 pip install --upgrade pip
-pip install requests pyttsx3 SpeechRecognition pyaudio faster-whisper flask flask-cors numpy python-vlc edge-tts pygame
+pip install requests pyttsx3 SpeechRecognition pyaudio faster-whisper flask flask-cors numpy python-vlc edge-tts pygame vosk psutil
 
 # 5. Download GitHub Files based on user choice
 echo -e "\n${CYAN}[4/5] Downloading Application Files...${NC}"
@@ -115,8 +117,10 @@ User=$USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$VENV_DIR/bin:/usr/bin:/usr/local/bin"
 # Ensure audio engines like PulseAudio/ALSA can be accessed by the service
-Environment="XDG_RUNTIME_DIR=/run/user/$(id -u)"
-Environment="PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native"
+Environment="XDG_RUNTIME_DIR=/run/user/\$(id -u)"
+Environment="PULSE_SERVER=unix:/run/user/\$(id -u)/pulse/native"
+# Provide access to the display if running the optional GUI
+Environment="DISPLAY=:0"
 ExecStart=$SERVICE_EXEC
 Restart=on-failure
 RestartSec=5
@@ -150,5 +154,6 @@ if [[ "$INSTALL_CHOICE" == "1" ]]; then
 else
     echo -e "${GREEN}Since you installed the Headless version, the microphone should now be active!${NC}"
     echo -e "Try speaking your wake word to test the audio engines."
+    echo -e "To use the graphical debugger interface later, run: ${YELLOW}$VENV_DIR/bin/python $INSTALL_DIR/main-noscreen.py --gui${NC}"
 fi
 echo ""
