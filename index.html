@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jesse Dash</title>
+    <title>Jesse </title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter (Premium Sans-Serif) -->
@@ -228,6 +228,15 @@
                 <!-- Tab 4: Settings -->
                 <div id="config-tab" class="tab-panel hidden flex flex-col gap-4">
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
+                        <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">User Profile</div>
+                        <p class="text-[9px] text-gray-400 leading-normal mb-1">Set your name for personalized greetings.</p>
+                        <div class="flex gap-2">
+                            <input type="text" id="user-name-input" placeholder="Your Name" class="w-full bg-black border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-cyan-400 transition-all">
+                            <button id="save-name-btn" class="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] px-3 rounded-lg transition-all uppercase tracking-wider">Save</button>
+                        </div>
+                    </div>
+
+                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
                         <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Wake Word Setup</div>
                         <button id="train-wakeword-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">⚡ Train Wakeword</button>
                         <p class="text-[9px] text-gray-400 leading-normal">Default is <b>Jesse</b>. Click train, and speak/type your custom word to save.</p>
@@ -277,11 +286,14 @@
         const applyVoiceBtn = document.getElementById('apply-voice-btn');
         const trainWakewordBtn = document.getElementById('train-wakeword-btn');
         const wakewordVal = document.getElementById('wakeword-val');
+        const userNameInput = document.getElementById('user-name-input');
+        const saveNameBtn = document.getElementById('save-name-btn');
 
         // State variables
         let wakeword = "jesse";
         let trainingMode = false;
         let selectedVoiceName = "";
+        let userName = localStorage.getItem('echo_user_name') || "Friend";
         let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || ["Buy groceries", "Water the plants"];
         let awaitingNoteContent = false;
         let awaitingCommand = false; // Tracks if assistant is actively listening for a follow-up
@@ -551,6 +563,17 @@
         applyVoiceBtn.addEventListener('click', () => {
             selectedVoiceName = voiceSelect.value;
             speak("Voice configuration updated. How do I sound now?");
+        });
+
+        // Setup User Name Profile
+        userNameInput.value = userName === "Friend" ? "" : userName;
+        saveNameBtn.addEventListener('click', () => {
+            const newName = userNameInput.value.trim();
+            if (newName) {
+                userName = newName;
+                localStorage.setItem('echo_user_name', userName);
+                speak(`Nice to meet you, ${userName}. Your profile has been saved.`);
+            }
         });
 
         // ==============================================================================
@@ -841,6 +864,12 @@
             // 0.5 Train Wakeword
             if (/train.*wakeword|change.*wakeword/i.test(cleanCmd)) {
                 triggerWakewordTraining();
+                return;
+            }
+
+            // 0.8 Good Morning Sequence
+            if (/\b(good morning|morning sequence|wake up sequence)\b/i.test(cleanCmd)) {
+                runGoodMorningSequence();
                 return;
             }
 
@@ -1194,6 +1223,41 @@
         // ==============================================================================
         // WIKIPEDIA, TIMERS, & UI UTILITIES
         // ==============================================================================
+        async function runGoodMorningSequence() {
+            speak(`Good morning, ${userName}. Let me look up today's headlines...`);
+
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            
+            let weatherStr = "I'm still loading the weather data.";
+            if (currentWeatherState.temp !== null) {
+                weatherStr = `The weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees and ${currentWeatherState.condition}.`;
+            }
+
+            try {
+                // Free RSS to JSON converter hitting the BBC World News feed
+                const rssUrl = encodeURIComponent('http://feeds.bbci.co.uk/news/world/rss.xml');
+                const newsRes = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`);
+                const newsData = await newsRes.json();
+
+                let newsStr = "I couldn't load the latest news right now.";
+                if (newsData && newsData.items && newsData.items.length >= 2) {
+                    const headline1 = newsData.items[0].title;
+                    const headline2 = newsData.items[1].title;
+                    newsStr = `Here are the top trending global stories: First, ${headline1}. Second, ${headline2}.`;
+                }
+
+                // Construct and speak the entire morning briefing at once
+                const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${newsStr} Have a wonderful day!`;
+                speak(fullSpeech);
+
+            } catch (e) {
+                console.warn("Morning sequence news error:", e);
+                const errorSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} I had trouble connecting to the news network, but I hope you have a great day!`;
+                speak(errorSpeech);
+            }
+        }
+
         function fetchWikipediaSummary(query) {
             speak(`Searching Wikipedia for ${query}...`);
             const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query.replace(/\s+/g, '_'))}`;
