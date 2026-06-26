@@ -423,7 +423,7 @@ def run_good_morning_sequence():
     news_str = "I couldn't load the latest news right now."
     try:
         rss_url = "http://feeds.bbci.co.uk/news/world/rss.xml"
-        news_res = requests.get(f"https://api.rss2json.com/v1/api.json?rss_url={rss_url}", timeout=5).json()
+        news_res = requests.get(f"https://api.rss2json.com/v1/api.json?rss_url=${rss_url}", timeout=5).json()
         if 'items' in news_res and len(news_res['items']) >= 2:
             h1 = news_res['items'][0]['title']
             h2 = news_res['items'][1]['title']
@@ -524,7 +524,7 @@ def _process_command_logic(text):
     if re.search(r'\b(good morning|morning sequence|wake up sequence)\b', clean_cmd):
         run_good_morning_sequence()
         
-    # NEW FEATURE: System volume routing skill (Accepts "volume 1" through "volume 10" / "one" through "ten")
+    # SYSTEM VOLUME: Quiet background adjustments matching requested 1-10 / words
     elif re.search(r'\bvolume\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b', clean_cmd):
         vol_match = re.search(r'\bvolume\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b', clean_cmd)
         vol_word = vol_match.group(1)
@@ -538,7 +538,7 @@ def _process_command_logic(text):
         if val is not None and 1 <= val <= 10:
             target_pct = val * 10
             set_system_volume(target_pct)
-            speak(f"Setting volume to {target_pct} percent.")
+            # Silent adjustment successfully made. Speak nothing per user instructions.
         else:
             speak("Please specify a volume level between 1 and 10.")
         return
@@ -546,7 +546,7 @@ def _process_command_logic(text):
     elif re.search(r'\b(time|date|clock)\b', clean_cmd):
         now = datetime.now()
         time_str = now.strftime("%I:%M %p")
-        date_str = now.strftime("%A, %B %d")
+        date_str = now.strftime("%A, %B %d, %Y")
         speak(f"It is {time_str} on {date_str}.")
         
     elif re.search(r'\b(weather|temperature|forecast)\b', clean_cmd) and not re.search(r'\b(watch|play|stream|tv|radio)\b', clean_cmd):
