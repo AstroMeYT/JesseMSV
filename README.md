@@ -4,6 +4,8 @@ A better version of the Jesse Assistant. Requires the ```main.py``` server to be
 
 You can also run ```main-noscreen.py``` if your deivce is voice-and-audio-only (eg. something like an Alexa Echo Dot).
 
+EVEN BETTER: Run this command to install it automatically (either version, dependencies automatically resolved): ```curl -sSL https://raw.githubusercontent.com/AstroMeYT/JesseMSV/refs/heads/main/install.bash | bash```
+
 ## Capabilities
 
 - Tell you the time and date
