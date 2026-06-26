@@ -1,19 +1,22 @@
 # JesseMSV
 
-A better version of the Jesse Assistant
+A better version of the Jesse Assistant. Requires the ```main.py``` server to be running to use local speech-to-text.
 
 ## Capabilities
 
-- Tell you the time and date ("what is the time/date" or similar)
-- Tell you the current weather ("what is the weather" or similar)
-- Create local notes ("make a note" or similar)
-- Set timers ("Set a timer for 1 minute and 20 seconds" or similar)
-- Calcuate equations ("Calculate 1 plus 1")
-- Flip a coin ("Flip a coin" or similar)
-- Play internet radio ("start the radio" or similar, then say the genre to play when asked)
-- Read Wikipedia article summaries ("Open Wikipedia" or similar)
-- Set a new wakework (Default is Jesse, "Train wakeword", then say the new wakeword when prompted)
-- Set a new voice (Default is Tenor, "Set voice" or similar, then say the voice you want to choose. Each voice will read a sentence)
+- Tell you the time and date
+- Tell you the current weather
+- Create local notes
+- Set timers
+- Calcuate equations
+- Flip a coin
+- Play internet radio
+- Read Wikipedia article summaries
+- Set a new wakework
+- Set a new voice
+- Tell jokes
+- Play internet radio and TV
+- "Good Morning" sequence
 
 ## How to Use Jesse
 
