@@ -2,6 +2,8 @@
 
 A better version of the Jesse Assistant. Requires the ```main.py``` server to be running to use local speech-to-text. Made for embedded devices with screens (doesn't need one, but it is nice).
 
+You can also run ```main-noscreen.py``` if your deivce is voice-and-audio-only (eg. something like an Alexa Echo Dot).
+
 ## Capabilities
 
 - Tell you the time and date
