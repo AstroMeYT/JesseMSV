@@ -12,7 +12,7 @@ Features:
   - Threaded TTS: Dedicated audio queue prevents UI/Mic freezing.
   - Media Streaming: Uses VLC to play background internet radio.
   - NLP Routing: Good Morning, Weather, Wiki, Radio, Timers, Math, and Notes.
-  - Optional GUI: Run with `--gui` to open a debug console and text-input window.
+  - Optional GUI: Run with `--gui` to open a High-DPI aware debug console.
 
 Author: Gatlin Nicholson
 ================================================================================
@@ -397,14 +397,14 @@ def get_wikipedia(query):
     speak(f"Searching Wikipedia for {query}...")
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{query.replace(' ', '_')}"
-        # FIX: Explicit User-Agent header bypasses Wikipedia's strict request blockers
+        # Explicit User-Agent header bypasses Wikipedia's strict request blockers
         headers = {'User-Agent': 'JesseAssistant/1.0 (contact: admin@jesseassistant.local)'}
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             data = res.json()
             extract = data.get("extract", "No description found.")
             summary = ". ".join(extract.split(".")[:2]) + "."
-            speak(f"From Wikipedia: {summary}")
+            speak(f"From Wikipedia, {data.get('title', query)}: {summary}")
         else:
             speak(f"I couldn't find an article for {query}.")
     except Exception as e:
@@ -613,7 +613,7 @@ def run_assistant():
 
 
 # ==============================================================================
-# OPTIONAL GUI DEBUGGER (--gui)
+# OPTIONAL GUI DEBUGGER (--gui with High-DPI Awareness)
 # ==============================================================================
 def run_gui_console():
     if not TKINTER_AVAILABLE:
@@ -622,10 +622,46 @@ def run_gui_console():
         
     root = tk.Tk()
     root.title("Jesse Smart Assistant - Live Console")
-    root.geometry("650x450")
     root.configure(bg="#1e1e1e")
     
-    console_txt = scrolledtext.ScrolledText(root, state=tk.DISABLED, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10), bd=0, highlightthickness=0)
+    # --- HIGH DPI SCALING CORRECTIONS ---
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            # Make the process DPI-aware so Windows doesn't blur the window
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
+
+    # Query system DPI and dynamically calculate a scaling factor
+    try:
+        base_dpi = 72.0 if sys.platform != "win32" else 96.0
+        dpi = root.winfo_fpixels('1i')
+        scaling_factor = max(1.0, dpi / base_dpi)
+    except Exception:
+        scaling_factor = 1.5  # Fallback for High-DPI displays
+
+    root.tk.call('tk', 'scaling', scaling_factor)
+    
+    # Calculate scaled geometry and font sizes
+    width = int(650 * scaling_factor)
+    height = int(450 * scaling_factor)
+    root.geometry(f"{width}x{height}")
+    
+    font_size_console = int(10 * scaling_factor)
+    font_size_input = int(12 * scaling_factor)
+    font_size_btn = int(10 * scaling_factor)
+
+    # Scrolled console output box
+    console_txt = scrolledtext.ScrolledText(
+        root, 
+        state=tk.DISABLED, 
+        bg="#1e1e1e", 
+        fg="#00ff00", 
+        font=("Consolas", font_size_console), 
+        bd=0, 
+        highlightthickness=0
+    )
     console_txt.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
     
     # THREAD-SAFE GUI LOGGING: Prevents Tkinter Segmentation Faults!
@@ -656,10 +692,19 @@ def run_gui_console():
     # Start the GUI log polling loop safely on the main thread
     process_gui_logs()
     
+    # Command Entry Frame
     input_frame = tk.Frame(root, bg="#1e1e1e")
     input_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
     
-    entry = tk.Entry(input_frame, bg="#2d2d2d", fg="#ffffff", font=("Consolas", 12), insertbackground="white", bd=1, relief=tk.FLAT)
+    entry = tk.Entry(
+        input_frame, 
+        bg="#2d2d2d", 
+        fg="#ffffff", 
+        font=("Consolas", font_size_input), 
+        insertbackground="white", 
+        bd=1, 
+        relief=tk.FLAT
+    )
     entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 10))
     
     def on_send(event=None):
@@ -669,7 +714,17 @@ def run_gui_console():
             print(f"\n[GUI Input Received]: {text}")
             process_command(text)
             
-    btn = tk.Button(input_frame, text="SEND COMMAND", bg="#0066cc", fg="white", font=("Consolas", 10, "bold"), bd=0, padx=15, pady=4, command=on_send)
+    btn = tk.Button(
+        input_frame, 
+        text="SEND COMMAND", 
+        bg="#0066cc", 
+        fg="white", 
+        font=("Consolas", font_size_btn, "bold"), 
+        bd=0, 
+        padx=15, 
+        pady=4, 
+        command=on_send
+    )
     btn.pack(side=tk.RIGHT)
     entry.bind("<Return>", on_send)
     
