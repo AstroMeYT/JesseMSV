@@ -74,7 +74,7 @@ automatically on boot.
 
 Open your terminal and run:
 
-curl -sSL https://raw.githubusercontent.com/AstroMeYT/JesseMSV/refs/heads/main/install.bash | bash
+```curl -sSL https://raw.githubusercontent.com/AstroMeYT/JesseMSV/refs/heads/main/install.bash | bash```
 
 During the installer, choose option "1" for the Web GUI server, or option "2"
 for the headless/Vosk-optimized assistant.
