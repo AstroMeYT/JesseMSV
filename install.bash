@@ -45,23 +45,23 @@ fi
 
 # 3. Detect Package Manager and Install System Dependencies
 echo -e "\n${CYAN}[2/5] Detecting Package Manager & Installing System Dependencies...${NC}"
-echo "We need to install PortAudio (for PyAudio), VLC (for radio streaming), and Tkinter (for GUI)."
+echo "We need to install PortAudio (for PyAudio), VLC (for radio streaming), Tkinter (for GUI), and ALSA Utils (for Volume Control)."
 
 if command -v apt-get >/dev/null; then
     echo -e "${GREEN}Debian/Ubuntu/Raspberry Pi OS detected.${NC}"
     sudo apt-get update
-    sudo apt-get install -y python3 python3-pip python3-venv wget curl vlc libportaudio2 libportaudiocpp0 portaudio19-dev python3-pyaudio espeak ffmpeg python3-tk
+    sudo apt-get install -y python3 python3-pip python3-venv wget curl vlc libportaudio2 libportaudiocpp0 portaudio19-dev python3-pyaudio espeak ffmpeg python3-tk alsa-utils
 elif command -v pacman >/dev/null; then
     echo -e "${GREEN}Arch Linux detected.${NC}"
-    sudo pacman -Sy --noconfirm python python-pip wget curl vlc portaudio python-pyaudio espeak-ng ffmpeg tk
+    sudo pacman -Sy --noconfirm python python-pip wget curl vlc portaudio python-pyaudio espeak-ng ffmpeg tk alsa-utils
 elif command -v dnf >/dev/null; then
     echo -e "${GREEN}Fedora detected.${NC}"
-    sudo dnf install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tkinter
+    sudo dnf install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tkinter alsa-utils
 elif command -v zypper >/dev/null; then
     echo -e "${GREEN}openSUSE detected.${NC}"
-    sudo zypper install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tk
+    sudo zypper install -y python3 python3-pip wget curl vlc portaudio-devel python3-pyaudio espeak ffmpeg python3-tk alsa-utils
 else
-    echo -e "${RED}Unsupported package manager. Please manually install: portaudio development headers, vlc, python3-venv, ffmpeg, and python3-tk.${NC}"
+    echo -e "${RED}Unsupported package manager. Please manually install: portaudio development headers, vlc, python3-venv, ffmpeg, alsa-utils, and python3-tk.${NC}"
     read -p "Press Enter to attempt continuing anyway, or Ctrl+C to abort..." < /dev/tty
 fi
 

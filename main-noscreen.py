@@ -13,6 +13,7 @@ Features:
   - Media Streaming: Uses VLC to play background internet radio.
   - NLP Routing: Good Morning, Weather, Wiki, Radio, Timers, Math, and Notes.
   - Optional GUI: Run with `--gui` to open a High-DPI aware debug console.
+  - System Volume Control: Adjust system audio level using native Linux commands.
 
 Author: Gatlin Nicholson
 ================================================================================
@@ -27,6 +28,7 @@ import random
 import threading
 import queue
 import json
+import subprocess
 from datetime import datetime
 
 # ==============================================================================
@@ -186,6 +188,45 @@ threading.Thread(target=tts_worker, daemon=True).start()
 def speak(text):
     """Puts text into the background speech queue instantly."""
     tts_queue.put(text)
+
+
+# ==============================================================================
+# SYSTEM VOLUME CONTROLLER (Linux Native Support)
+# ==============================================================================
+def set_system_volume(volume_percent):
+    """Adjusts the system Master playback channel based on native OS audio endpoints."""
+    volume_percent = max(0, min(100, int(volume_percent)))
+    
+    if sys.platform == "darwin":
+        # macOS native Applescript
+        os.system(f"osascript -e 'set volume output volume {volume_percent}'")
+        print(f"[Volume] Set to {volume_percent}% (macOS)")
+    elif sys.platform == "win32":
+        # Windows PyCaw fallback support
+        try:
+            from ctypes import cast, POINTER
+            from comtypes import CLSCTX_ALL
+            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            volume.SetMasterVolumeLevelScalar(volume_percent / 100.0, None)
+            print(f"[Volume] Set to {volume_percent}% (Windows)")
+        except ImportError:
+            print("Windows volume error: PyCaw or Comtypes library not configured.")
+    else:
+        # Linux Native (ALSA / Pulse / PipeWire)
+        try:
+            # Attempt ALSA amixer adjustments
+            subprocess.run(["amixer", "sset", "Master", f"{volume_percent}%"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[Volume] Set to {volume_percent}% (Linux - ALSA amixer)")
+        except Exception:
+            try:
+                # PulseAudio fallback
+                subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{volume_percent}%"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"[Volume] Set to {volume_percent}% (Linux - Pulse pactl)")
+            except Exception as e:
+                print(f"[Volume Error] Could not parse system endpoints on Linux: {e}")
 
 
 # ==============================================================================
@@ -483,6 +524,25 @@ def _process_command_logic(text):
     if re.search(r'\b(good morning|morning sequence|wake up sequence)\b', clean_cmd):
         run_good_morning_sequence()
         
+    # NEW FEATURE: System volume routing skill (Accepts "volume 1" through "volume 10" / "one" through "ten")
+    elif re.search(r'\bvolume\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b', clean_cmd):
+        vol_match = re.search(r'\bvolume\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b', clean_cmd)
+        vol_word = vol_match.group(1)
+        val = None
+        if vol_word.isdigit():
+            val = int(vol_word)
+        else:
+            word_map = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+            val = word_map.get(vol_word)
+        
+        if val is not None and 1 <= val <= 10:
+            target_pct = val * 10
+            set_system_volume(target_pct)
+            speak(f"Setting volume to {target_pct} percent.")
+        else:
+            speak("Please specify a volume level between 1 and 10.")
+        return
+
     elif re.search(r'\b(time|date|clock)\b', clean_cmd):
         now = datetime.now()
         time_str = now.strftime("%I:%M %p")
