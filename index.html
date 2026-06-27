@@ -82,7 +82,7 @@
             <!-- Ultra-minimal Floating Assistant input & bubble (Replaced massive box) -->
             <div class="w-full max-w-sm flex flex-col gap-2 drop-shadow-lg">
                 
-                <!-- NOW PLAYING CARD -->
+                <!-- NOW PLAYING CARD (Hidden by default) -->
                 <div id="now-playing-card" class="mb-1 bg-black/60 backdrop-blur-xl border border-white/10 rounded-xl p-3 w-full hidden opacity-0 transition-all duration-500 transform translate-y-4 shadow-xl flex items-center justify-between pointer-events-auto">
                     <div class="flex items-center gap-3 overflow-hidden">
                         <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-lg">
@@ -103,9 +103,9 @@
                     </div>
                 </div>
 
-                <!-- Sleek Speech Bubble line -->
+                <!-- Sleek Speech Bubble line (Dynamic UI Container) -->
                 <div id="speech-bubble" class="text-xs text-white/95 font-light leading-relaxed bg-black/40 backdrop-blur-md px-3.5 py-2 rounded-lg border border-white/5 self-start shadow-md min-h-[34px] max-w-full inline-flex items-center break-words">
-                    <!-- Dynamic suggestions / visual spinners loaded here -->
+                    <!-- Dynamic content injected here via JS -->
                 </div>
                 <!-- Sleek Borderless Input Bar -->
                 <div class="flex gap-2 w-full">
@@ -118,7 +118,7 @@
                 <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Jesse</b></span>
             </div>
 
-            <!-- Floating Audio & Drawer Controllers (Bottom-Right) -->
+            <!-- Floating Audio & Drawer Controllers (Bottom-Right - Slightly Smaller) -->
             <div class="flex items-center gap-2.5 ml-auto">
                 <button id="mic-trigger-btn" class="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-semibold px-4 py-2.5 rounded-xl shadow-xl transition-all tracking-wide">
                     <i data-lucide="mic" class="w-4 h-4"></i>
@@ -133,7 +133,7 @@
 
     </div>
 
-    <!-- LIVE VIDEO STREAM OVERLAY -->
+    <!-- LIVE VIDEO STREAM OVERLAY (Hidden by default) -->
     <div id="video-overlay" class="fixed inset-0 z-40 bg-black/85 backdrop-blur-md hidden flex-col items-center justify-center p-6 transition-opacity duration-500 opacity-0 hide-on-sleep">
         <div class="w-full max-w-5xl relative flex flex-col items-center drop-shadow-2xl">
             <div class="w-full flex justify-between items-center mb-4">
@@ -150,7 +150,7 @@
         </div>
     </div>
 
-    <!-- RIGHT HAND CONTROL DRAWER -->
+    <!-- RIGHT HAND CONTROL DRAWER (Slide-out menu - Now Slimmer) -->
     <div id="control-drawer" class="fixed top-0 right-0 h-full w-[360px] max-w-full bg-black/92 backdrop-blur-xl border-l border-white/10 shadow-2xl z-50 translate-x-full transition-transform duration-300 ease-in-out p-6 flex flex-col justify-between hide-on-sleep">
 
         <div>
@@ -699,12 +699,13 @@
         });
 
         // ==============================================================================
-        // DUAL ENGINE: PYTHON BACKEND -> WASM BROWSER FALLBACK (Using Classic Workers)
+        // DUAL ENGINE: PYTHON BACKEND -> WASM BROWSER FALLBACK
         // ==============================================================================
         
         let isMicActive = false;
         let isRecordingCommand = false; 
         
+        let localRecognizer = null; // Web Speech API (Local Wake Word)
         let audioContext = null;
         let processor = null;
         let audioBuffer = [];
@@ -719,102 +720,22 @@
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
 
-        // --- BROWSER VOSK (WAKE WORD) INITIALIZATION (Classic Worker Implementation) ---
-        let voskReady = false;
-        let voskWorker = null;
-        
-        const voskWorkerCode = `
-            importScripts('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.14/dist/vosk.js');
-
-            let recognizer = null;
-            self.onmessage = async (e) => {
-                if (e.data.type === 'init') {
-                    try {
-                        // Load the local zip file passed from the main thread
-                        const modelUrl = e.data.modelUrl;
-                        const model = await Vosk.createModel(modelUrl);
-                        
-                        // Restrict Vosk completely to our wake words, making it fast & accurate
-                        const wakeWords = '["jesse", "jessie", "jessy", "jes", "yes", "stop", "cancel", "[unk]"]';
-                        recognizer = new model.KaldiRecognizer(16000, wakeWords);
-                        
-                        self.postMessage({ type: 'status', message: 'Ready' });
-                    } catch (err) {
-                        self.postMessage({ type: 'error', message: err.toString() });
-                    }
-                } else if (e.data.type === 'process') {
-                    if (!recognizer) return;
-                    try {
-                        const isFinal = recognizer.acceptWaveform(e.data.audio);
-                        let text = isFinal ? recognizer.getResult().text : recognizer.getPartialResult().partial;
-                        if (text) {
-                            self.postMessage({ type: 'result', text: text });
-                        }
-                    } catch(err) {}
-                } else if (e.data.type === 'reset') {
-                    if (recognizer) recognizer.reset();
-                }
-            };
-        `;
-        const voskBlob = new Blob([voskWorkerCode], { type: 'application/javascript' });
-        const voskWorkerUrl = URL.createObjectURL(voskBlob);
-
-        async function initVoskWakeWord() {
-            return new Promise((resolve) => {
-                if (voskWorker) return resolve(voskReady);
-                
-                appendLog("[Starting background Vosk Wake Word pre-fetch...]");
-                // Classic Worker (No ES Module or type:module issues)
-                voskWorker = new Worker(voskWorkerUrl);
-                
-                // Get absolute directory path of the current index.html to fetch local vosk-model.zip
-                let baseUrl = window.location.href.split('/').slice(0, -1).join('/');
-                const localModelUrl = baseUrl + '/vosk-model.zip';
-                
-                voskWorker.onmessage = (e) => {
-                    if (e.data.type === 'status' && e.data.message === 'Ready') {
-                        voskReady = true;
-                        appendLog("[Local Vosk Wake Word Engine Ready]");
-                        resolve(true);
-                    } else if (e.data.type === 'result' && !isRecordingCommand && !isAssistantSpeaking) {
-                        const transcript = e.data.text;
-                        
-                        const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
-                            ? /\b(jesse|jessie|jessy|jes)\b/i 
-                            : new RegExp(`\\b${wakeword}\\b`, 'i');
-
-                        // Trigger Phase 2 if Wake Word is matched, OR if we are waiting for a follow-up answer
-                        let isTrigger = false;
-                        if (wakewordRegex.test(transcript)) isTrigger = true;
-                        if ((awaitingCommand || trainingMode || awaitingNoteContent) && transcript.length > 0) isTrigger = true;
-
-                        if (isTrigger) {
-                            triggerCommandCapture();
-                        }
-                    } else if (e.data.type === 'error') {
-                        console.error("Local Vosk error:", e.data.message);
-                        resolve(false);
-                    }
-                };
-                
-                voskWorker.postMessage({ type: 'init', modelUrl: localModelUrl });
-            });
-        }
-
-
-        // --- BROWSER WASM FALLBACK INITIALIZATION (Classic Worker Implementation) ---
+        // --- BROWSER WASM FALLBACK INITIALIZATION ---
         let whisperReady = false;
         let whisperWorker = null;
 
         const whisperWorkerCode = `
-            importScripts('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
-
             let transcriber = null;
+            let pipeline = null;
+            let env = null;
 
             self.onmessage = async (e) => {
                 if (e.data.type === 'init') {
                     try {
-                        const { pipeline, env } = transformers;
+                        // FIX: Use dynamic import to bypass strict Blob Module CORS rules
+                        const transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+                        pipeline = transformers.pipeline;
+                        env = transformers.env;
                         env.allowLocalModels = false;
 
                         transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
@@ -849,29 +770,25 @@
         const whisperBlob = new Blob([whisperWorkerCode], { type: 'application/javascript' });
         const whisperWorkerUrl = URL.createObjectURL(whisperBlob);
 
-        async function initWasmWhisper() {
-            return new Promise((resolve) => {
-                if (whisperWorker) return resolve(whisperReady);
-                
-                appendLog("[Starting background WASM Whisper pre-fetch...]");
-                // Classic Worker (No ES Module or type:module issues)
-                whisperWorker = new Worker(whisperWorkerUrl);
-                
-                whisperWorker.onmessage = (e) => {
-                    if (e.data.type === 'status' && e.data.message === 'Ready') {
-                        whisperReady = true;
-                        appendLog("[Local WASM Fallback Engine Ready]");
-                        resolve(true);
-                    } else if (e.data.type === 'result') {
-                        processTranscript(e.data.text || "", "WASM STT");
-                    } else if (e.data.type === 'error') {
-                        console.error("Local Whisper WASM error:", e.data.message);
-                        resolve(false);
-                    }
-                };
-                
-                whisperWorker.postMessage({ type: 'init' });
-            });
+        function initWasmWhisper() {
+            if (whisperWorker) return;
+            
+            appendLog("[Starting background WASM Whisper pre-fetch...]");
+            // FIX: Removed { type: 'module' } to prevent browser from silently killing the worker
+            whisperWorker = new Worker(whisperWorkerUrl);
+            
+            whisperWorker.onmessage = (e) => {
+                if (e.data.type === 'status' && e.data.message === 'Ready') {
+                    whisperReady = true;
+                    appendLog("[Local WASM Fallback Engine Ready]");
+                } else if (e.data.type === 'result') {
+                    processTranscript(e.data.text || "", "WASM STT");
+                } else if (e.data.type === 'error') {
+                    console.error("Local Whisper WASM error:", e.data.message);
+                }
+            };
+            
+            whisperWorker.postMessage({ type: 'init' });
         }
 
 
@@ -903,35 +820,13 @@
                 osc.stop(ctx.currentTime + 0.3);
             } catch (e) {}
         }
-        
-        function triggerCommandCapture() {
-            isRecordingCommand = true;
-            silenceFrames = 0;
-            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
-            audioBuffer = [...preRollBuffer]; 
-            
-            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
-                playWakeChime(); 
-            }
-            
-            requestAnimationFrame(() => {
-                setMicState('listening', 'RECORDING');
-                setBubbleState('listening');
-            });
-            
-            // Clear Vosk stream so it doesn't immediately false-trigger on leftover data
-            if (voskReady && voskWorker) {
-                voskWorker.postMessage({ type: 'reset' });
-            }
-        }
 
         async function startHybridMicSystem() {
             try {
                 setMicState('init', 'INITIALIZING...');
-                setBubbleState('info', 'Loading local AI models (Vosk + Whisper)...');
                 
-                // Spin up both WASM background workers gracefully on boot
-                await Promise.all([initVoskWakeWord(), initWasmWhisper()]);
+                // Spin up WASM background worker gracefully on boot
+                initWasmWhisper();
                 
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -963,7 +858,7 @@
                     const rms = Math.sqrt(sum / inputData.length);
 
                     if (isRecordingCommand) {
-                        // PHASE 2: Command Capture (For Python/Whisper)
+                        // PHASE 2: Command Capture
                         audioBuffer.push(new Float32Array(inputData));
 
                         if (rms < SILENCE_THRESHOLD) {
@@ -986,17 +881,92 @@
                         if (preRollBuffer.length > PRE_ROLL_FRAMES) {
                             preRollBuffer.shift();
                         }
-                        
-                        // Send audio chunks to local Vosk WASM worker to check for wake words
-                        if (voskReady && voskWorker) {
-                            voskWorker.postMessage({ type: 'process', audio: inputData });
-                        }
                     }
                 };
 
-                setMicState('auto', 'WAKEWORD MODE');
-                setBubbleState('wakeword');
-                appendLog("[Hybrid Dual-WASM Engine Active]");
+                // 2. Start Local Free Web Speech API purely for Wake Word detection
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (SpeechRecognition) {
+                    localRecognizer = new SpeechRecognition();
+                    localRecognizer.continuous = true;
+                    localRecognizer.interimResults = true; // Crucial for instant reaction
+
+                    localRecognizer.onresult = (event) => {
+                        if (isAssistantSpeaking || isRecordingCommand) return;
+
+                        let transcript = "";
+                        for (let i = event.resultIndex; i < event.results.length; i++) {
+                            transcript += event.results[i][0].transcript;
+                        }
+                        
+                        // Strip punctuation for safer wakeword matching
+                        transcript = transcript.replace(/[?!,;:]/g, '').replace(/(?<!\d)\.(?!\d)/g, '').replace(/\.+$/, '');
+                        
+                        const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
+                            ? /\b(jesse|jessie|jessy)\b/i 
+                            : new RegExp(`\\b${wakeword}\\b`, 'i');
+
+                        // If wake word is heard locally OR the user is in a 8-sec follow-up conversation
+                        if (wakewordRegex.test(transcript) || awaitingCommand || trainingMode || awaitingNoteContent) {
+                            
+                            isRecordingCommand = true;
+                            silenceFrames = 0;
+                            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
+                            audioBuffer = [...preRollBuffer]; 
+                            
+                            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
+                                playWakeChime(); 
+                            }
+                            
+                            requestAnimationFrame(() => {
+                                setMicState('listening', 'RECORDING');
+                                setBubbleState('listening');
+                            });
+                        }
+                    };
+
+                    localRecognizer.onerror = (event) => {
+                        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                            console.warn("Local Web Speech Error:", event.error);
+                            stopHybridMicSystem();
+                            setBubbleState('info', "Microphone access denied.");
+                        }
+                    };
+
+                    localRecognizer.onend = () => {
+                        // Smoothly reboot the local engine in background to prevent browser stalls
+                        if (isMicActive) {
+                            setTimeout(() => {
+                                if (isMicActive) {
+                                    // Prevent 10-second prompt spam on strict browsers or file:/// protocol
+                                    if (navigator.permissions && navigator.permissions.query) {
+                                        navigator.permissions.query({ name: 'microphone' }).then(perm => {
+                                            if (perm.state === 'granted') {
+                                                try { localRecognizer.start(); } catch(e){}
+                                            } else {
+                                                stopHybridMicSystem();
+                                                setBubbleState('info', "Mic permission not saved globally. Click LISTEN.");
+                                            }
+                                        }).catch(() => {
+                                            try { localRecognizer.start(); } catch(e){}
+                                        });
+                                    } else {
+                                        try { localRecognizer.start(); } catch(e){}
+                                    }
+                                }
+                            }, 1000); 
+                        }
+                    };
+
+                    localRecognizer.start();
+                    setMicState('auto', 'WAKEWORD MODE');
+                    setBubbleState('wakeword');
+                    appendLog("[Hybrid Engine Active]");
+                } else {
+                    // Fallback for Firefox/Safari browsers missing Speech API
+                    setMicState('auto', 'PUSH TO TALK');
+                    setBubbleState('info', "Local wake word unsupported. Click LISTEN to command.");
+                }
 
             } catch (err) {
                 console.error("Mic access denied or error:", err);
@@ -1024,8 +994,7 @@
 
             try {
                 // PRIMARY ROUTE: Try local python server first! (Instant speed)
-                // Using "localhost" to allow safe secure context mapping on GitHub Pages (HTTPS)
-                const response = await fetch('http://localhost:5000/transcribe', {
+                const response = await fetch('http://127.0.0.1:5000/transcribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/octet-stream' },
                     body: int16Buffer
@@ -1087,6 +1056,10 @@
             isMicActive = false;
             isRecordingCommand = false;
             
+            if (localRecognizer) {
+                localRecognizer.onend = null;
+                localRecognizer.stop();
+            }
             if (processor) {
                 processor.disconnect();
                 processor = null;
@@ -1110,7 +1083,12 @@
                 startHybridMicSystem();
             } else if (!isRecordingCommand) {
                 // Allows user to manually bypass the wake word (Push to Talk)
-                triggerCommandCapture();
+                isRecordingCommand = true;
+                silenceFrames = 0;
+                audioBuffer = [...preRollBuffer];
+                playWakeChime();
+                setMicState('listening', 'RECORDING');
+                setBubbleState('listening');
             } else {
                 stopHybridMicSystem();
             }
