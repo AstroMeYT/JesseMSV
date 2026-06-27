@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jesse</title>
-    <link rel="manifest" href="/manifest.json">
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter (Premium Sans-Serif) -->
@@ -733,15 +732,25 @@
         }
 
         function playWakeChime() {
-            try {
-                const chimeAudio = document.getElementById('wake-chime-audio');
-                if (chimeAudio) {
-                    chimeAudio.currentTime = 0;
-                    chimeAudio.play().catch(e => console.warn("Chime blocked by browser:", e));
+            return new Promise((resolve) => {
+                try {
+                    const chimeAudio = document.getElementById('wake-chime-audio');
+                    if (chimeAudio) {
+                        chimeAudio.currentTime = 0;
+                        chimeAudio.onended = resolve;
+                        chimeAudio.onerror = resolve; // Continue even if audio fails
+                        chimeAudio.play().catch(e => {
+                            console.warn("Chime blocked by browser:", e);
+                            resolve();
+                        });
+                    } else {
+                        resolve();
+                    }
+                } catch (e) {
+                    console.warn("Could not play chime", e);
+                    resolve();
                 }
-            } catch (e) {
-                console.warn("Could not play chime", e);
-            }
+            });
         }
 
         function initWebSpeech() {
@@ -760,8 +769,10 @@
                 appendLog("[Native Speech Engine Active]");
             };
 
-            recognition.onresult = (event) => {
-                if (isAssistantSpeaking || !isMicActive) return;
+            let isChiming = false;
+
+            recognition.onresult = async (event) => {
+                if (isAssistantSpeaking || !isMicActive || isChiming) return;
 
                 let interimTranscript = '';
                 let finalTranscript = '';
@@ -778,20 +789,33 @@
                 if (!currentText) return;
 
                 if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
-                    // WAKE WORD MODE: Scan continuous text stream for our trigger
-                    const wakewordRegex = new RegExp(`\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b`, 'i');
+                    // WAKE WORD MODE: 
+                    // INCREASED SENSITIVITY: Removed strict trailing word boundary. 
+                    // Catches the word instantly on interim results without waiting for a space!
+                    const wakewordRegex = new RegExp(`\\b(${wakeword}|hey ${wakeword}|hi ${wakeword})`, 'i');
                     const match = currentText.match(wakewordRegex);
 
                     if (match) {
+                        isChiming = true;
                         const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
                         
                         if (finalTranscript && textAfterWakeword.length > 2) {
                             // User spoke everything in one breath (e.g., "Jesse what time is it")
-                            playWakeChime();
+                            await playWakeChime();
+                            isChiming = false;
                             processTranscript(finalTranscript, "Native Speech");
                         } else {
                             // User just said "Jesse", wait for command
+                            // ABORT instantly to flush the audio buffer so background noise isn't carried over!
+                            try { recognition.abort(); } catch(e){}
+                            
+                            await playWakeChime();
+                            
+                            isChiming = false;
                             triggerCommandCapture();
+                            
+                            // Restart with a 100% clean slate AFTER the chime has ended
+                            try { recognition.start(); } catch(e){}
                         }
                     }
                 } else {
@@ -812,7 +836,8 @@
 
             recognition.onend = () => {
                 // Auto-restart Native API to keep listening if mic should be active
-                if (isMicActive) {
+                // Ensure we don't restart here if we are actively pausing for the chime
+                if (isMicActive && !isChiming) {
                     try { recognition.start(); } catch(e){}
                 }
             };
@@ -822,10 +847,6 @@
 
         function triggerCommandCapture() {
             isCommandCapture = true;
-            
-            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
-                playWakeChime(); 
-            }
             
             requestAnimationFrame(() => {
                 setMicState('listening', 'RECORDING');
@@ -893,12 +914,15 @@
             appendLog("[Mic Paused]");
         }
 
-        micTriggerBtn.addEventListener('click', () => {
+        micTriggerBtn.addEventListener('click', async () => {
             if (!isMicActive) {
                 startMicSystem();
             } else if (!isCommandCapture) {
                 // Allows user to manually bypass the wake word (Push to Talk)
+                try { recognition.abort(); } catch(e){}
+                await playWakeChime();
                 triggerCommandCapture();
+                try { recognition.start(); } catch(e){}
             } else {
                 stopMicSystem();
             }
