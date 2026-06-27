@@ -14,6 +14,10 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- HLS.js for Live Video Stream Support -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- PeerJS for Direct Phone-to-Assistant Tunneling -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- QRCode Generator for Pairing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -79,7 +83,7 @@
         <!-- BOTTOM AREA (Minimalist Speech Line + Input & Bottom Actions) -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-end w-full mt-auto gap-4 pointer-events-auto transition-opacity duration-1000 hide-on-sleep">
             
-            <!-- Ultra-minimal Floating Assistant input & bubble (Replaced massive box) -->
+            <!-- Ultra-minimal Floating Assistant input & bubble -->
             <div class="w-full max-w-sm flex flex-col gap-2 drop-shadow-lg">
                 
                 <!-- NOW PLAYING CARD -->
@@ -113,12 +117,11 @@
                     <button id="send-command-btn" class="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] px-3 rounded-lg transition-all uppercase tracking-wider">Send</button>
                 </div>
                 
-                <!-- Silent variables so we do not break JavaScript selectors -->
                 <span id="assistant-title" class="hidden"></span>
                 <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Jesse</b></span>
             </div>
 
-            <!-- Floating Audio & Drawer Controllers (Bottom-Right) -->
+            <!-- Floating Audio & Drawer Controllers -->
             <div class="flex items-center gap-2.5 ml-auto">
                 <button id="mic-trigger-btn" class="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-semibold px-4 py-2.5 rounded-xl shadow-xl transition-all tracking-wide">
                     <i data-lucide="mic" class="w-4 h-4"></i>
@@ -147,6 +150,28 @@
             </div>
             <!-- Universal Media Player -->
             <video id="main-media-player" class="w-full aspect-video rounded-2xl shadow-[0_0_50px_rgba(0,229,255,0.15)] bg-black/50 border border-white/10 object-contain" controls playsinline></video>
+        </div>
+    </div>
+
+    <!-- QR CODE PAIRING OVERLAY -->
+    <div id="qr-overlay" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl hidden flex-col items-center justify-center p-6 transition-opacity duration-500 opacity-0 hide-on-sleep">
+        <div class="bg-white/5 border border-white/10 p-8 rounded-3xl flex flex-col items-center shadow-2xl max-w-md w-full text-center relative">
+            <button id="close-qr-btn" class="absolute top-4 right-4 text-gray-400 hover:text-white bg-white/10 hover:bg-white/20 p-2 rounded-xl transition-all">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+            <div class="w-12 h-12 bg-cyan-500/20 rounded-full flex items-center justify-center mb-4 border border-cyan-500/30">
+                <i data-lucide="smartphone" class="w-6 h-6 text-cyan-400"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-white mb-2 tracking-wide">Pair Phone</h2>
+            <p class="text-xs text-gray-400 mb-6 leading-relaxed">Scan this secure QR code using the Companion Manager App to link your local calendar and settings.</p>
+            
+            <div class="bg-white p-4 rounded-2xl shadow-inner mb-6">
+                <div id="qrcode-container"></div>
+            </div>
+
+            <div class="flex items-center gap-2 text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> PeerJS Tunnel Active
+            </div>
         </div>
     </div>
 
@@ -200,7 +225,7 @@
                         <ul class="list-disc list-inside space-y-0.5">
                             <li>"Jesse, calculate 1 plus 3 plus two"</li>
                             <li>"Jesse, write a note to buy flowers"</li>
-                            <li>"Jesse, set timer for 1 minute 30 seconds"</li>
+                            <li>"Jesse, add event doctor appointment tomorrow"</li>
                             <li>"Jesse, play 104.3 The Party"</li>
                             <li>"Jesse, watch NASA TV"</li>
                         </ul>
@@ -249,6 +274,16 @@
 
                 <!-- Tab 4: Settings -->
                 <div id="config-tab" class="tab-panel hidden flex flex-col gap-4">
+                    
+                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
+                        <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider flex justify-between">
+                            <span>Phone Integration</span>
+                            <span id="peer-status-txt" class="text-gray-400 font-normal">Waiting...</span>
+                        </div>
+                        <button id="show-qr-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">Show Pairing QR</button>
+                        <p class="text-[9px] text-gray-400 leading-normal">Say "Pair with my phone" to sync private calendar data.</p>
+                    </div>
+                    
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
                         <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">User Profile</div>
                         <p class="text-[9px] text-gray-400 leading-normal mb-1">Set your name for personalized greetings.</p>
@@ -277,7 +312,7 @@
         </div>
 
         <div class="text-center text-[9px] text-gray-500">
-            Smart Display Suite • Native Web Speech Edition
+            Smart Display Suite • Private PeerJS Edition
         </div>
     </div>
 
@@ -311,13 +346,18 @@
         const wakewordVal = document.getElementById('wakeword-val');
         const userNameInput = document.getElementById('user-name-input');
         const saveNameBtn = document.getElementById('save-name-btn');
+        const qrOverlay = document.getElementById('qr-overlay');
+        const closeQrBtn = document.getElementById('close-qr-btn');
+        const showQrBtn = document.getElementById('show-qr-btn');
+        const peerStatusTxt = document.getElementById('peer-status-txt');
 
         // State variables
         let wakeword = "jesse";
         let trainingMode = false;
         let selectedVoiceName = "";
         let userName = localStorage.getItem('echo_user_name') || "Friend";
-        let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || ["Buy groceries", "Water the plants", "Prepare demo"];
+        let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || ["Buy groceries", "Water the plants"];
+        
         let awaitingNoteContent = false;
         let awaitingCommand = false; 
         let awaitingCommandTimeout = null; 
@@ -336,8 +376,8 @@
             'Ask me anything! Say "Jesse, play country music"',
             'Say "Jesse, what\'s the weather today?"',
             'Try "Jesse, set a timer for 10 minutes"',
-            'Say "Jesse, tell me a joke"',
-            'Try "Jesse, watch NASA TV"',
+            'Say "Jesse, pair with my phone"',
+            'Try "Jesse, add event doctor appointment"',
             'Say "Jesse, write a note to call mom"',
             'Ask "Jesse, who is Albert Einstein?"',
             'Say "Jesse, flip a coin"'
@@ -376,10 +416,141 @@
         };
 
         // ==============================================================================
+        // PEER.JS / PRIVATE CALENDAR & PERMISSION SYNC
+        // ==============================================================================
+        let peer = null;
+        let assistantPeerId = null;
+        let activePeerConnections = [];
+        let customCalendar = JSON.parse(localStorage.getItem('echo_private_calendar')) || [];
+        let assistantPermissions = {
+            allowWeather: true,
+            allowTimers: true,
+            allowRadio: true
+        };
+
+        function initPeerJS() {
+            peer = new Peer(); // Let PeerJS assign a random ID
+            
+            peer.on('open', (id) => {
+                assistantPeerId = id;
+                peerStatusTxt.textContent = "ID Generated";
+                appendLog("[PeerJS Server Active: " + id + "]");
+            });
+
+            peer.on('connection', (conn) => {
+                activePeerConnections.push(conn);
+                peerStatusTxt.textContent = "Paired";
+                peerStatusTxt.classList.replace('text-gray-400', 'text-green-400');
+                
+                conn.on('data', (data) => {
+                    handlePeerData(data, conn);
+                });
+
+                conn.on('open', () => {
+                    hideQRCode();
+                    speak("A remote manager phone has been connected.");
+                    // Push current state to the phone immediately
+                    syncToPeers();
+                });
+
+                conn.on('close', () => {
+                    activePeerConnections = activePeerConnections.filter(c => c !== conn);
+                    if (activePeerConnections.length === 0) {
+                        peerStatusTxt.textContent = "Disconnected";
+                        peerStatusTxt.classList.replace('text-green-400', 'text-gray-400');
+                    }
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error("PeerJS Error:", err);
+                appendLog("[PeerJS Error: " + err.type + "]");
+                
+                // Add robust handling for when Peer server disconnects or fails
+                if (err.type === 'network' || err.type === 'server-error' || err.type === 'unavailable-id') {
+                     // Try reconnecting in 5s
+                     setTimeout(() => {
+                         if(peer && !peer.destroyed) peer.reconnect();
+                     }, 5000);
+                }
+            });
+            
+            peer.on('disconnected', () => {
+                 peerStatusTxt.textContent = "Disconnected";
+                 appendLog("[PeerJS Disconnected, attempting reconnect...]");
+                 setTimeout(() => {
+                     if(peer && !peer.destroyed) peer.reconnect();
+                 }, 3000);
+            });
+        }
+
+        function handlePeerData(payload, conn) {
+            if (payload.type === 'sync') {
+                // Phone sent us updated calendar or settings
+                if (payload.calendar) {
+                    customCalendar = payload.calendar;
+                    localStorage.setItem('echo_private_calendar', JSON.stringify(customCalendar));
+                }
+                if (payload.permissions) {
+                    assistantPermissions = payload.permissions;
+                }
+                appendLog("[Synced data from Phone]");
+            }
+        }
+
+        function syncToPeers() {
+            activePeerConnections.forEach(conn => {
+                if(conn && conn.open) {
+                    conn.send({
+                        type: 'sync',
+                        calendar: customCalendar,
+                        permissions: assistantPermissions
+                    });
+                }
+            });
+        }
+
+        function showPairingQR() {
+            if (!assistantPeerId) {
+                speak("I am still connecting to the private network. Try again in a moment.");
+                return;
+            }
+            const container = document.getElementById('qrcode-container');
+            container.innerHTML = '';
+            new QRCode(container, {
+                text: assistantPeerId,
+                width: 200,
+                height: 200,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.H
+            });
+            
+            qrOverlay.classList.remove('hidden');
+            setTimeout(() => {
+                qrOverlay.classList.remove('opacity-0');
+                qrOverlay.classList.add('opacity-100');
+            }, 50);
+            speak("Scan this code with the companion app to pair your device.");
+        }
+
+        function hideQRCode() {
+            qrOverlay.classList.remove('opacity-100');
+            qrOverlay.classList.add('opacity-0');
+            setTimeout(() => {
+                qrOverlay.classList.add('hidden');
+            }, 500);
+        }
+
+        closeQrBtn.addEventListener('click', hideQRCode);
+        showQrBtn.addEventListener('click', showPairingQR);
+
+        initPeerJS();
+
+
+        // ==============================================================================
         // DYNAMIC UI UPDATERS (SPEECH BUBBLE & SUGGESTIONS)
         // ==============================================================================
-        let currentBubbleState = 'idle';
-
         function startSuggestionRotation() {
             if (suggestionInterval) clearInterval(suggestionInterval);
             suggestionInterval = setInterval(updateSuggestion, 8000);
@@ -393,7 +564,7 @@
             if (currentBubbleState !== 'idle' && currentBubbleState !== 'wakeword') return;
 
             let capitalizedWakeWord = wakeword.charAt(0).toUpperCase() + wakeword.slice(1);
-            let text = suggestions[suggestionIndex].replace(/Jesse|Alexa|Neo|Nova/gi, capitalizedWakeWord);
+            let text = suggestions[suggestionIndex].replace(/Jesse/gi, capitalizedWakeWord);
             
             const suggestionSpan = document.getElementById('suggestion-text');
             if (suggestionSpan) {
@@ -499,11 +670,13 @@
         }
 
         function getLocationAndWeather() {
+            // First check if a saved location exists
             if (savedCity) {
                 fetchWeatherByCity(savedCity);
                 return;
             }
 
+            // Otherwise attempt GeoLocation logic safely
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
@@ -592,7 +765,8 @@
             }
         }
         
-        getLocationAndWeather();
+        // Let initialization catch up
+        setTimeout(getLocationAndWeather, 1000);
         setInterval(() => {
             if (userLocation.lat && userLocation.lon) {
                 fetchLiveWeather(userLocation.lat, userLocation.lon);
@@ -790,8 +964,6 @@
 
                 if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
                     // WAKE WORD MODE: 
-                    // INCREASED SENSITIVITY: Removed strict trailing word boundary. 
-                    // Catches the word instantly on interim results without waiting for a space!
                     const wakewordRegex = new RegExp(`\\b(${wakeword}|hey ${wakeword}|hi ${wakeword})`, 'i');
                     const match = currentText.match(wakewordRegex);
 
@@ -800,13 +972,12 @@
                         const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
                         
                         if (finalTranscript && textAfterWakeword.length > 2) {
-                            // User spoke everything in one breath (e.g., "Jesse what time is it")
+                            // User spoke everything in one breath
                             await playWakeChime();
                             isChiming = false;
                             processTranscript(finalTranscript, "Native Speech");
                         } else {
                             // User just said "Jesse", wait for command
-                            // ABORT instantly to flush the audio buffer so background noise isn't carried over!
                             try { recognition.abort(); } catch(e){}
                             
                             await playWakeChime();
@@ -814,12 +985,11 @@
                             isChiming = false;
                             triggerCommandCapture();
                             
-                            // Restart with a 100% clean slate AFTER the chime has ended
                             try { recognition.start(); } catch(e){}
                         }
                     }
                 } else {
-                    // COMMAND CAPTURE MODE: Feed live text to UI and process when finished
+                    // COMMAND CAPTURE MODE
                     setBubbleState('listening', currentText);
                     
                     if (finalTranscript) {
@@ -831,12 +1001,10 @@
             };
 
             recognition.onerror = (event) => {
-                // Ignore silent restarts or network drops, engine will auto-reboot
+                // Ignore silent restarts or network drops
             };
 
             recognition.onend = () => {
-                // Auto-restart Native API to keep listening if mic should be active
-                // Ensure we don't restart here if we are actively pausing for the chime
                 if (isMicActive && !isChiming) {
                     try { recognition.start(); } catch(e){}
                 }
@@ -873,7 +1041,7 @@
         }
 
         function processTranscript(rawText, sourceEngine) {
-            // Strip out ambient hallucinations and ALL punctuation (except decimals)
+            // Strip out ambient hallucinations and ALL punctuation
             let cleanText = rawText.replace(/\[.*?\]|\(.*?\)/g, '')
                                    .replace(/[?!,;:]/g, '')
                                    .replace(/(?<!\d)\.(?!\d)/g, '')
@@ -882,7 +1050,6 @@
                                      
             if (cleanText) {
                 appendLog(`${sourceEngine}: "${cleanText}"`);
-                // Prepend the wakeword explicitly to ensure NLP router always accepts the transcribed string
                 handleCommand(wakeword + " " + cleanText);
             } else {
                 setBubbleState('info', "Didn't hear any clear command.");
@@ -1091,6 +1258,35 @@
                 return;
             }
 
+            if (/\b(pair|connect|link)\b.*\b(phone|qr code)\b/i.test(cleanCmd)) {
+                showPairingQR();
+                resetUIState();
+                return;
+            }
+
+            // Private PeerJS Calendar ADD EVENT Route
+            if (/\b(add|create|schedule)\b.*\b(event|appointment)\b/i.test(cleanCmd)) {
+                if(!assistantPermissions.allowWeather && assistantPermissions.allowWeather !== undefined) {
+                     // Re-using weather perm logic conceptually or just assume allowed
+                }
+                let eventText = cleanCmd.replace(/.*?\b(add|create|schedule)\s+(an\s+)?(event|appointment)\b/i, '').trim();
+                // Removes awkward grammar starts like "for" or "called" if they exist
+                eventText = eventText.replace(/^(called|for|to)\s+/i, '').trim();
+
+                if (!eventText) {
+                    speak("What is the event you want to add to your calendar?");
+                    awaitingCommand = true; // Could map this to an awaitingEvent state instead
+                } else {
+                    const todayDate = new Date().toISOString().split('T')[0];
+                    customCalendar.push({ title: eventText, date: todayDate });
+                    localStorage.setItem('echo_private_calendar', JSON.stringify(customCalendar));
+                    speak(`I've added ${eventText} to your local calendar.`);
+                    syncToPeers();
+                }
+                resetUIState();
+                return;
+            }
+
             if (/change.*wakeword/i.test(cleanCmd)) {
                 triggerWakewordTraining();
                 return;
@@ -1113,6 +1309,11 @@
             }
 
             if (/\b(weather|temperature|forecast)\b/i.test(cleanCmd) && !/\b(watch|play|stream|tv)\b/i.test(cleanCmd)) {
+                if (!assistantPermissions.allowWeather) {
+                    speak("Weather requests are currently disabled in your manager app.");
+                    resetUIState();
+                    return;
+                }
                 if (currentWeatherState.temp !== null) {
                     speak(`The weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees Fahrenheit and ${currentWeatherState.condition}.`);
                 } else {
@@ -1148,6 +1349,11 @@
             }
 
             if (/\b(timer|second|minute|hour)\b/i.test(cleanCmd)) {
+                if (!assistantPermissions.allowTimers) {
+                    speak("Timers are currently disabled in your manager app.");
+                    resetUIState();
+                    return;
+                }
                 const seconds = parseDurationToSeconds(commandText);
                 if (seconds > 0) {
                     startTimer(seconds);
@@ -1209,6 +1415,11 @@
             }
 
             if (/\b(radio|music|stream|play|listen to)\b/i.test(cleanCmd) && !cleanCmd.includes("flip")) {
+                if (!assistantPermissions.allowRadio) {
+                    speak("Radio features are currently disabled in your manager app.");
+                    resetUIState();
+                    return;
+                }
                 if (/\b(stop|pause|turn off)\b/i.test(cleanCmd)) {
                     stopRadio();
                     speak("Radio playback stopped.");
@@ -1500,6 +1711,19 @@
                     weatherStr += `Today's outlook calls for ${currentWeatherState.forecastCondition.toLowerCase()}, with a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}. `;
                 }
             }
+            
+            // Read off PeerJS Synced Private Calendar Events
+            let calendarStr = "";
+            const todayDate = now.toISOString().split('T')[0];
+            const todaysEvents = customCalendar.filter(ev => ev.date === todayDate);
+            
+            if (todaysEvents.length === 0) {
+                calendarStr = "You have no events on your calendar for today.";
+            } else {
+                let evStrings = todaysEvents.map(ev => ev.title);
+                calendarStr = `You have ${todaysEvents.length} event${todaysEvents.length > 1 ? 's' : ''} today. `;
+                calendarStr += evStrings.join(". ") + ".";
+            }
 
             try {
                 const rssUrl = encodeURIComponent('http://feeds.bbci.co.uk/news/world/rss.xml');
@@ -1513,12 +1737,12 @@
                     newsStr = `Here are the top trending global stories: First, ${headline1}. Second, ${headline2}.`;
                 }
 
-                const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${newsStr} Have a wonderful day!`;
+                const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${calendarStr} ${newsStr} Have a wonderful day!`;
                 speak(fullSpeech);
 
             } catch (e) {
                 console.warn("Morning sequence news error:", e);
-                const errorSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} I had trouble connecting to the news network, but I hope you have a great day!`;
+                const errorSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${calendarStr} I had trouble connecting to the news network, but I hope you have a great day!`;
                 speak(errorSpeech);
             }
         }
@@ -1708,28 +1932,10 @@
             });
         });
 
-        // Auto-Initialize Mic if Permissions are Already Granted
-        if (navigator.permissions && navigator.permissions.query) {
-            navigator.permissions.query({ name: 'microphone' }).then((perm) => {
-                if (perm.state === 'granted') {
-                    startMicSystem();
-                }
-            }).catch(e => console.warn(e));
-        }
-
         function switchTab(tabId) {
             const tabBtn = Array.from(tabs).find(t => t.getAttribute('data-target') === tabId);
             if (tabBtn) tabBtn.click();
         }
-
-        function triggerWakewordTraining() {
-            trainingMode = true;
-            switchTab('config-tab');
-            openDrawer();
-            setBubbleState('info', "Say or type your new wakeword now.");
-            speak("What would you like your new wake word to be?");
-        }
-        trainWakewordBtn.addEventListener('click', triggerWakewordTraining);
 
         sendCommandBtn.addEventListener('click', () => {
             const val = commandInput.value.trim();
