@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neo</title>
+    <title>Jesse</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter (Premium Sans-Serif) -->
@@ -115,7 +115,7 @@
                 
                 <!-- Silent variables so we do not break JavaScript selectors -->
                 <span id="assistant-title" class="hidden"></span>
-                <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Neo</b></span>
+                <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Jesse</b></span>
             </div>
 
             <!-- Floating Audio & Drawer Controllers (Bottom-Right) -->
@@ -198,11 +198,11 @@
                     <div class="text-[10px] text-gray-500 leading-relaxed">
                         <p class="font-semibold text-gray-400 mb-0.5">Spoken Commands:</p>
                         <ul class="list-disc list-inside space-y-0.5">
-                            <li>"Neo, calculate 1 plus 3 plus two"</li>
-                            <li>"Neo, write a note to buy flowers"</li>
-                            <li>"Neo, set timer for 1 minute 30 seconds"</li>
-                            <li>"Neo, play 104.3 The Party"</li>
-                            <li>"Neo, watch NASA TV"</li>
+                            <li>"Jesse, calculate 1 plus 3 plus two"</li>
+                            <li>"Jesse, write a note to buy flowers"</li>
+                            <li>"Jesse, set timer for 1 minute 30 seconds"</li>
+                            <li>"Jesse, play 104.3 The Party"</li>
+                            <li>"Jesse, watch NASA TV"</li>
                         </ul>
                     </div>
                 </div>
@@ -258,10 +258,10 @@
                         </div>
                     </div>
 
-                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2 opacity-50 pointer-events-none">
+                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
                         <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Wake Word Setup</div>
-                        <button class="w-full bg-cyan-500/20 text-gray-400 font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">Managed by Server</button>
-                        <p class="text-[9px] text-gray-400 leading-normal">Your Wake Word is strictly managed by your Python server's OpenWakeWord engine to preserve browser stability and privacy.</p>
+                        <button id="train-wakeword-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">⚡ Change Wake Word</button>
+                        <p class="text-[9px] text-gray-400 leading-normal">Default is <b>Jesse</b>. Managed by Native Web Speech API.</p>
                     </div>
 
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
@@ -277,28 +277,18 @@
         </div>
 
         <div class="text-center text-[9px] text-gray-500">
-            Smart Display Suite • WebSockets VAD Edition
+            Smart Display Suite • Native Web Speech Edition
         </div>
     </div>
 
     <!-- Alarm sound element fallback -->
     <audio id="alarm-audio" src="https://assets.mixkit.co/active_storage/sfx/2013/2013-84.wav" preload="auto"></audio>
+    <audio id="wake-chime-audio" src="chime.wav" preload="auto"></audio>
 
     <!-- JS BUSINESS LOGIC -->
     <script>
         // Initialize Lucide Icons
         lucide.createIcons();
-        
-        // ==============================================================================
-        // SECURE INTERNET / NETWORK ROUTING SETUP
-        // ==============================================================================
-        // If you are using Ngrok, Cloudflare Tunnels, or hosting your server on the internet,
-        // simply replace "127.0.0.1:5000" below with your public URL (e.g. "my-app.ngrok.app")
-        const BACKEND_DOMAIN = "127.0.0.1:5000"; 
-        
-        const IS_SECURE = window.location.protocol === 'https:' || BACKEND_DOMAIN.includes('ngrok') || BACKEND_DOMAIN.includes('trycloudflare');
-        const HTTP_URL = `${IS_SECURE ? 'https' : 'http'}://${BACKEND_DOMAIN}`;
-        const WS_URL = `${IS_SECURE ? 'wss' : 'ws'}://${BACKEND_DOMAIN}/wakeword`;
 
         // System Constants & Elements
         const clockDisplay = document.getElementById('clock-display');
@@ -317,11 +307,13 @@
         const sendCommandBtn = document.getElementById('send-command-btn');
         const voiceSelect = document.getElementById('voice-select');
         const applyVoiceBtn = document.getElementById('apply-voice-btn');
+        const trainWakewordBtn = document.getElementById('train-wakeword-btn');
+        const wakewordVal = document.getElementById('wakeword-val');
         const userNameInput = document.getElementById('user-name-input');
         const saveNameBtn = document.getElementById('save-name-btn');
 
         // State variables
-        let wakeword = "neo";
+        let wakeword = "jesse";
         let trainingMode = false;
         let selectedVoiceName = "";
         let userName = localStorage.getItem('echo_user_name') || "Friend";
@@ -341,14 +333,14 @@
 
         // Contextual Suggestions Rotation logic
         const suggestions = [
-            'Ask me anything! Say "Neo, play country music"',
-            'Say "Neo, what\'s the weather today?"',
-            'Try "Neo, set a timer for 10 minutes"',
-            'Say "Neo, tell me a joke"',
-            'Try "Neo, watch NASA TV"',
-            'Say "Neo, write a note to call mom"',
-            'Ask "Neo, who is Albert Einstein?"',
-            'Say "Neo, flip a coin"'
+            'Ask me anything! Say "Jesse, play country music"',
+            'Say "Jesse, what\'s the weather today?"',
+            'Try "Jesse, set a timer for 10 minutes"',
+            'Say "Jesse, tell me a joke"',
+            'Try "Jesse, watch NASA TV"',
+            'Say "Jesse, write a note to call mom"',
+            'Ask "Jesse, who is Albert Einstein?"',
+            'Say "Jesse, flip a coin"'
         ];
         let suggestionIndex = 0;
         let suggestionInterval = null;
@@ -401,7 +393,7 @@
             if (currentBubbleState !== 'idle' && currentBubbleState !== 'wakeword') return;
 
             let capitalizedWakeWord = wakeword.charAt(0).toUpperCase() + wakeword.slice(1);
-            let text = suggestions[suggestionIndex].replace(/Jesse|Alexa|Neo/gi, capitalizedWakeWord);
+            let text = suggestions[suggestionIndex].replace(/Jesse|Alexa|Neo|Nova/gi, capitalizedWakeWord);
             
             const suggestionSpan = document.getElementById('suggestion-text');
             if (suggestionSpan) {
@@ -433,7 +425,7 @@
             } else {
                 stopSuggestionRotation();
                 if (state === 'listening') {
-                    speechBubble.innerHTML = `<div class="flex items-center gap-2 text-green-400 font-medium tracking-wide"><span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span> Listening...</div>`;
+                    speechBubble.innerHTML = `<div class="flex items-center gap-2 text-green-400 font-medium tracking-wide"><span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span> <span>${text || 'Listening...'}</span></div>`;
                 } else if (state === 'processing') {
                     speechBubble.innerHTML = `<div class="flex items-center gap-2 text-cyan-400 font-medium tracking-wide"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing</div>`;
                     lucide.createIcons({ root: speechBubble });
@@ -681,7 +673,7 @@
                 // Acoustic echo guard to let room decay quiet down
                 setTimeout(() => {
                     isAssistantSpeaking = false; 
-                    if (!awaitingCommand && !isRecordingCommand) {
+                    if (!awaitingCommand && !isCommandCapture) {
                         setBubbleState(isMicActive ? 'wakeword' : 'idle');
                     }
                 }, 1500); 
@@ -689,7 +681,7 @@
             utterance.onerror = () => { 
                 setTimeout(() => {
                     isAssistantSpeaking = false; 
-                    if (!awaitingCommand && !isRecordingCommand) {
+                    if (!awaitingCommand && !isCommandCapture) {
                         setBubbleState(isMicActive ? 'wakeword' : 'idle');
                     }
                 }, 1500);
@@ -716,61 +708,17 @@
         });
 
         // ==============================================================================
-        // WEBSOCKET VAD STREAMER -> PYTHON OPENWAKEWORD / WHISPER
+        // PURE NATIVE WEB SPEECH ENGINE (Wake Word & Command STT)
         // ==============================================================================
         
         let isMicActive = false;
-        let isSpeaking = false;
         let isCommandCapture = false; 
         
-        let audioContext = null;
-        let processor = null;
-        let mediaStream = null;
-        let wakeSocket = null;
-        
-        let audioBuffer = [];
-        let preRollBuffer = [];
-        let silenceFrames = 0;
-
-        const SILENCE_THRESHOLD = 0.02; 
-        const SILENCE_FRAMES_MAX = 6;  // Roughly 1.5s of silence triggers transmission
-        const PRE_ROLL_FRAMES = 8;     // Maintains ~2 seconds of pre-trigger buffer
-
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
 
-        // Initialize persistent WebSocket connection to Python Backend
-        function initWakeSocket() {
-            if (wakeSocket && (wakeSocket.readyState === WebSocket.OPEN || wakeSocket.readyState === WebSocket.CONNECTING)) return;
-            
-            wakeSocket = new WebSocket(WS_URL);
-            wakeSocket.binaryType = 'arraybuffer';
-            
-            wakeSocket.onopen = () => {
-                appendLog("[Cloud WebSocket Secured]");
-            };
-            
-            wakeSocket.onmessage = (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    if (data.detected && !isCommandCapture && !isAssistantSpeaking) {
-                        // SERVER CONFIRMED WAKE WORD! Switch to command capture instantly.
-                        playWakeChime();
-                        isCommandCapture = true;
-                        audioBuffer = [...preRollBuffer]; 
-                        
-                        setMicState('listening', 'RECORDING');
-                        setBubbleState('listening');
-                    }
-                } catch(err){}
-            };
-            
-            wakeSocket.onclose = () => {
-                // Reconnect if the server drops or resets
-                setTimeout(initWakeSocket, 4000);
-            };
-        }
-        initWakeSocket(); // Start background connection instantly
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
 
         function setMicState(state, text = null) {
             micTriggerBtn.classList.remove('bg-red-600', 'bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-yellow-500');
@@ -785,27 +733,94 @@
 
         function playWakeChime() {
             try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                
-                osc.type = "sine";
-                osc.frequency.setValueAtTime(880, ctx.currentTime); 
-                gain.gain.setValueAtTime(0.05, ctx.currentTime); 
-                
-                osc.start();
-                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-                osc.stop(ctx.currentTime + 0.3);
-            } catch (e) {}
+                const chimeAudio = document.getElementById('wake-chime-audio');
+                if (chimeAudio) {
+                    chimeAudio.currentTime = 0;
+                    chimeAudio.play().catch(e => console.warn("Chime blocked by browser:", e));
+                }
+            } catch (e) {
+                console.warn("Could not play chime", e);
+            }
+        }
+
+        function initWebSpeech() {
+            if (!SpeechRecognition) {
+                setBubbleState('info', "Your browser doesn't support the Native Speech API.");
+                return false;
+            }
+            if (recognition) return true;
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                appendLog("[Native Speech Engine Active]");
+            };
+
+            recognition.onresult = (event) => {
+                if (isAssistantSpeaking || !isMicActive) return;
+
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                let currentText = (finalTranscript || interimTranscript).trim().toLowerCase();
+                if (!currentText) return;
+
+                if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
+                    // WAKE WORD MODE: Scan continuous text stream for our trigger
+                    const wakewordRegex = new RegExp(`\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b`, 'i');
+                    const match = currentText.match(wakewordRegex);
+
+                    if (match) {
+                        const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
+                        
+                        if (finalTranscript && textAfterWakeword.length > 2) {
+                            // User spoke everything in one breath (e.g., "Jesse what time is it")
+                            playWakeChime();
+                            processTranscript(finalTranscript, "Native Speech");
+                        } else {
+                            // User just said "Jesse", wait for command
+                            triggerCommandCapture();
+                        }
+                    }
+                } else {
+                    // COMMAND CAPTURE MODE: Feed live text to UI and process when finished
+                    setBubbleState('listening', currentText);
+                    
+                    if (finalTranscript) {
+                        isCommandCapture = false;
+                        setBubbleState('processing');
+                        processTranscript(finalTranscript, "Native Speech");
+                    }
+                }
+            };
+
+            recognition.onerror = (event) => {
+                // Ignore silent restarts or network drops, engine will auto-reboot
+            };
+
+            recognition.onend = () => {
+                // Auto-restart Native API to keep listening if mic should be active
+                if (isMicActive) {
+                    try { recognition.start(); } catch(e){}
+                }
+            };
+
+            return true;
         }
 
         function triggerCommandCapture() {
             isCommandCapture = true;
-            isSpeaking = true;
-            silenceFrames = 0;
-            audioBuffer = [...preRollBuffer]; 
             
             if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
                 playWakeChime(); 
@@ -817,168 +832,26 @@
             });
         }
 
-        async function startHybridMicSystem() {
-            try {
-                setMicState('init', 'INITIALIZING...');
-                
-                // WARM MIC STREAM ONLY IF WE DON'T ALREADY HAVE ONE
-                if (!mediaStream) {
-                    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                }
-                
-                if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-                } else if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-
-                if (!processor) {
-                    const source = audioContext.createMediaStreamSource(mediaStream);
-                    const gainNode = audioContext.createGain();
-                    gainNode.gain.value = 0; 
-                    processor = audioContext.createScriptProcessor(4096, 1, 1);
-                    
-                    source.connect(processor);
-                    processor.connect(gainNode);
-                    gainNode.connect(audioContext.destination);
-                }
-
+        function startMicSystem() {
+            setMicState('init', 'INITIALIZING...');
+            
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
                 isMicActive = true;
-                isSpeaking = false;
-                isCommandCapture = false;
-                audioBuffer = [];
-                preRollBuffer = [];
-                silenceFrames = 0;
-
-                // Continuously monitor mic volume levels
-                processor.onaudioprocess = (e) => {
-                    if (!isMicActive || isAssistantSpeaking) return;
-
-                    const inputData = e.inputBuffer.getChannelData(0);
-                    let sum = 0;
-                    for (let i = 0; i < inputData.length; i++) {
-                        sum += inputData[i] * inputData[i];
-                    }
-                    const rms = Math.sqrt(sum / inputData.length);
-
-                    // VOICE ACTIVITY DETECTOR (VAD)
-                    if (rms > SILENCE_THRESHOLD) {
-                        silenceFrames = 0;
-                        if (!isSpeaking) {
-                            isSpeaking = true;
-                            // Someone started talking!
-                            if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
-                                setBubbleState('info', 'Listening for wake word...');
-                            } else if (awaitingCommand || awaitingNoteContent) {
-                                // Instantly trigger if we are in a follow up conversation
-                                triggerCommandCapture();
-                            }
-                        }
-                    } else {
-                        if (isSpeaking) {
-                            silenceFrames++;
-                        } else {
-                            // Phase 1: Silence. Accumulate history to prevent cut off words
-                            preRollBuffer.push(new Float32Array(inputData));
-                            if (preRollBuffer.length > PRE_ROLL_FRAMES) preRollBuffer.shift();
-                        }
-                    }
-
-                    if (isSpeaking) {
-                        if (isCommandCapture) {
-                            // Phase 3: Accumulating FULL command to send to Whisper STT
-                            audioBuffer.push(new Float32Array(inputData));
-
-                            if (silenceFrames >= SILENCE_FRAMES_MAX) {
-                                isSpeaking = false;
-                                isCommandCapture = false;
-                                silenceFrames = 0;
-                                requestAnimationFrame(() => {
-                                    setMicState('processing', 'PROCESSING'); 
-                                    setBubbleState('processing');
-                                });
-                                sendToBackendPythonServer();
-                            }
-                        } else {
-                            // Phase 2: Send binary chunk instantly over WebSocket for Wakeword Check
-                            if (wakeSocket && wakeSocket.readyState === WebSocket.OPEN) {
-                                const int16Buffer = new Int16Array(inputData.length);
-                                for (let i = 0; i < inputData.length; i++) {
-                                    let s = Math.max(-1, Math.min(1, inputData[i]));
-                                    int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                                }
-                                wakeSocket.send(int16Buffer.buffer);
-                            }
-                            
-                            if (silenceFrames >= SILENCE_FRAMES_MAX) {
-                                // False alarm (eg. coughed or dropped a pen).
-                                isSpeaking = false;
-                                silenceFrames = 0;
-                                setBubbleState('wakeword');
-                                
-                                // Reset the remote Python Server memory immediately
-                                if (wakeSocket && wakeSocket.readyState === WebSocket.OPEN) {
-                                    wakeSocket.send("RESET");
-                                }
-                            }
-                        }
-                    }
-                };
-
                 setMicState('auto', 'WAKEWORD MODE');
                 setBubbleState('wakeword');
-                appendLog("[Live Audio Pipeline Active]");
-
-            } catch (err) {
+                
+                if (initWebSpeech()) {
+                    try { recognition.start(); } catch(e){}
+                }
+            }).catch(err => {
                 console.error("Mic access denied or error:", err);
                 setMicState('idle', 'MIC ERROR');
                 setBubbleState('info', "Microphone error or denied.");
-            }
-        }
-
-        async function sendToBackendPythonServer() {
-            let totalLength = audioBuffer.reduce((acc, val) => acc + val.length, 0);
-            let flattenedFloat32 = new Float32Array(totalLength);
-            let offset = 0;
-            for (let arr of audioBuffer) {
-                flattenedFloat32.set(arr, offset);
-                offset += arr.length;
-            }
-            audioBuffer = [];
-
-            // Convert Float32Array to Int16Array for Local Python Server Backend
-            const int16Buffer = new Int16Array(flattenedFloat32.length);
-            for (let i = 0; i < flattenedFloat32.length; i++) {
-                let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
-                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-
-            try {
-                const response = await fetch(HTTP_URL + '/transcribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/octet-stream' },
-                    body: int16Buffer
-                });
-                
-                if (!response.ok) throw new Error("Backend response error");
-                const data = await response.json();
-                
-                if (data.status === 'success' && data.text) {
-                    processTranscript(data.text, "Python STT");
-                } else {
-                    setBubbleState('info', "Didn't hear any clear command.");
-                    resetUIState();
-                }
-
-            } catch (err) {
-                console.warn("Python Server offline:", err);
-                setBubbleState('info', "Local STT Server offline. Ensure local_stt_server.py is running!");
-                resetUIState();
-            }
+            });
         }
 
         function processTranscript(rawText, sourceEngine) {
-            // Strip out Whisper ambient hallucinations and ALL punctuation (except decimals)
+            // Strip out ambient hallucinations and ALL punctuation (except decimals)
             let cleanText = rawText.replace(/\[.*?\]|\(.*?\)/g, '')
                                    .replace(/[?!,;:]/g, '')
                                    .replace(/(?<!\d)\.(?!\d)/g, '')
@@ -991,8 +864,8 @@
                 handleCommand(wakeword + " " + cleanText);
             } else {
                 setBubbleState('info', "Didn't hear any clear command.");
+                resetUIState();
             }
-            resetUIState();
         }
 
         function resetUIState() {
@@ -1006,13 +879,12 @@
             }, 1500);
         }
 
-        function stopHybridMicSystem() {
+        function stopMicSystem() {
             isMicActive = false;
-            isSpeaking = false;
-            isRecordingCommand = false;
+            isCommandCapture = false;
             
-            if (audioContext) {
-                audioContext.suspend();
+            if (recognition) {
+                try { recognition.stop(); } catch(e){}
             }
             
             setMicState('idle', 'LISTEN');
@@ -1022,12 +894,12 @@
 
         micTriggerBtn.addEventListener('click', () => {
             if (!isMicActive) {
-                startHybridMicSystem();
+                startMicSystem();
             } else if (!isCommandCapture) {
                 // Allows user to manually bypass the wake word (Push to Talk)
                 triggerCommandCapture();
             } else {
-                stopHybridMicSystem();
+                stopMicSystem();
             }
         });
 
@@ -1120,10 +992,6 @@
         // CORE SKILLS ROUTER (Enhanced Leniency)
         // ==============================================================================
         function handleCommand(rawInput) {
-            // Strip any remaining punctuation (except decimals) to prevent matching logic from breaking
-            rawInput = rawInput.replace(/[?!,;:]/g, '')
-                               .replace(/(?<!\d)\.(?!\d)/g, '')
-                               .replace(/\.+$/, '');
             let cleanedInput = rawInput.toLowerCase().trim();
 
             if (awaitingNoteContent) {
@@ -1131,13 +999,12 @@
                     awaitingNoteContent = false;
                     awaitingCommand = false;
                     speak("Note cancelled.");
+                    resetUIState();
                     return;
                 }
                 
                 let finalNoteContent = rawInput.trim();
-                const noteWakewordRegex = wakeword.toLowerCase() === 'neo' 
-                    ? /^\b(neo|nio)\b\s*/i 
-                    : new RegExp(`^\\b${wakeword}\\b\\s*`, 'i');
+                const noteWakewordRegex = new RegExp(`^\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b\\s*`, 'i');
                 finalNoteContent = finalNoteContent.replace(noteWakewordRegex, '').trim();
                 finalNoteContent = finalNoteContent.replace(/^[^a-zA-Z0-9]+/, '').trim();
                 
@@ -1151,14 +1018,28 @@
                 }
                 awaitingNoteContent = false;
                 awaitingCommand = false;
+                resetUIState();
+                return;
+            }
+
+            if (trainingMode) {
+                const words = cleanedInput.split(/\s+/);
+                if (words.length > 0) {
+                    wakeword = words[0].toLowerCase();
+                    wakewordVal.textContent = wakeword.charAt(0).toUpperCase() + wakeword.slice(1);
+                    trainingMode = false;
+                    awaitingCommand = false;
+                    
+                    setBubbleState('info', "Wake word updated successfully!");
+                    speak(`Wake word updated successfully. You can now prompt me with "${wakeword}"!`);
+                }
+                resetUIState();
                 return;
             }
 
             let isAddressed = false;
             let commandText = cleanedInput;
-            const wakewordRegex = wakeword.toLowerCase() === 'neo' 
-                ? /^\b(neo|nio)\b/i 
-                : new RegExp(`\\b${wakeword}\\b`, 'i');
+            const wakewordRegex = new RegExp(`\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b`, 'i');
             const match = cleanedInput.match(wakewordRegex);
 
             if (match) {
@@ -1179,13 +1060,20 @@
                 awaitingCommand = true;
                 awaitingCommandTimeout = setTimeout(() => {
                     awaitingCommand = false;
+                    resetUIState();
                 }, 8000); 
                 speak("Yes?");
                 return;
             }
 
+            if (/change.*wakeword/i.test(cleanCmd)) {
+                triggerWakewordTraining();
+                return;
+            }
+
             if (/\b(good morning|morning sequence|wake up sequence)\b/i.test(cleanCmd)) {
                 runGoodMorningSequence();
+                resetUIState();
                 return;
             }
 
@@ -1195,6 +1083,7 @@
                 const dateStr = now.toLocaleDateString('en-US', options);
                 const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                 speak(`It is currently ${timeStr} on ${dateStr}.`);
+                resetUIState();
                 return;
             }
 
@@ -1204,6 +1093,7 @@
                 } else {
                     speak("I am still trying to pinpoint your location and load the weather data. Please try again in a moment.");
                 }
+                resetUIState();
                 return;
             }
 
@@ -1217,6 +1107,7 @@
                 } else {
                     speak("What city would you like to set your location to?");
                 }
+                resetUIState();
                 return;
             }
 
@@ -1227,6 +1118,7 @@
                 } else {
                     speak("Sorry, I couldn't evaluate that math equation. Try: calculate 5 plus two.");
                 }
+                resetUIState();
                 return;
             }
 
@@ -1240,12 +1132,14 @@
                 } else {
                     speak("How long would you like me to set the timer for?");
                 }
+                resetUIState();
                 return;
             }
 
             if (/\b(flip|toss)\b.*\b(coin)\b/i.test(cleanCmd)) {
                 const result = Math.random() < 0.5 ? "Heads" : "Tails";
                 speak(`I flipped a coin and got ${result}!`);
+                resetUIState();
                 return;
             }
 
@@ -1270,6 +1164,7 @@
                         speak("What would you like me to put in the note?");
                     }
                 }
+                resetUIState();
                 return;
             }
 
@@ -1284,6 +1179,7 @@
                     }
                     playInternetTV(query);
                 }
+                resetUIState();
                 return;
             }
 
@@ -1298,6 +1194,7 @@
                     }
                     playDynamicRadio(query);
                 }
+                resetUIState();
                 return;
             }
 
@@ -1309,11 +1206,13 @@
                 } else {
                     speak("What topic would you like me to look up?");
                 }
+                resetUIState();
                 return;
             }
 
             if (/\b(joke|funny)\b/i.test(cleanCmd)) {
                 fetchJoke();
+                resetUIState();
                 return;
             }
 
@@ -1327,12 +1226,15 @@
                     document.body.classList.add('sleep-mode');
                     speak("Entering sleep mode.");
                 }
+                resetUIState();
                 return;
             }
 
             if (isAddressed) {
                 speak("I heard you, but I didn't recognize that specific command. Try asking about weather, timers, math, radio, or notes.");
             }
+            
+            resetUIState();
         }
 
         // ==============================================================================
@@ -1785,7 +1687,7 @@
         if (navigator.permissions && navigator.permissions.query) {
             navigator.permissions.query({ name: 'microphone' }).then((perm) => {
                 if (perm.state === 'granted') {
-                    startHybridMicSystem();
+                    startMicSystem();
                 }
             }).catch(e => console.warn(e));
         }
@@ -1794,6 +1696,15 @@
             const tabBtn = Array.from(tabs).find(t => t.getAttribute('data-target') === tabId);
             if (tabBtn) tabBtn.click();
         }
+
+        function triggerWakewordTraining() {
+            trainingMode = true;
+            switchTab('config-tab');
+            openDrawer();
+            setBubbleState('info', "Say or type your new wakeword now.");
+            speak("What would you like your new wake word to be?");
+        }
+        trainWakewordBtn.addEventListener('click', triggerWakewordTraining);
 
         sendCommandBtn.addEventListener('click', () => {
             const val = commandInput.value.trim();
