@@ -14,6 +14,9 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- HLS.js for Live Video Stream Support -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- TensorFlow.js and Speech Commands for Custom Offline Wake Word detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -82,7 +85,7 @@
             <!-- Ultra-minimal Floating Assistant input & bubble (Replaced massive box) -->
             <div class="w-full max-w-sm flex flex-col gap-2 drop-shadow-lg">
                 
-                <!-- NOW PLAYING CARD (Hidden by default) -->
+                <!-- NOW PLAYING CARD -->
                 <div id="now-playing-card" class="mb-1 bg-black/60 backdrop-blur-xl border border-white/10 rounded-xl p-3 w-full hidden opacity-0 transition-all duration-500 transform translate-y-4 shadow-xl flex items-center justify-between pointer-events-auto">
                     <div class="flex items-center gap-3 overflow-hidden">
                         <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-lg">
@@ -103,9 +106,9 @@
                     </div>
                 </div>
 
-                <!-- Sleek Speech Bubble line (Dynamic UI Container) -->
+                <!-- Sleek Speech Bubble line -->
                 <div id="speech-bubble" class="text-xs text-white/95 font-light leading-relaxed bg-black/40 backdrop-blur-md px-3.5 py-2 rounded-lg border border-white/5 self-start shadow-md min-h-[34px] max-w-full inline-flex items-center break-words">
-                    <!-- Dynamic content injected here via JS -->
+                    <!-- Dynamic suggestions / visual spinners loaded here -->
                 </div>
                 <!-- Sleek Borderless Input Bar -->
                 <div class="flex gap-2 w-full">
@@ -118,7 +121,7 @@
                 <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Jesse</b></span>
             </div>
 
-            <!-- Floating Audio & Drawer Controllers (Bottom-Right - Slightly Smaller) -->
+            <!-- Floating Audio & Drawer Controllers (Bottom-Right) -->
             <div class="flex items-center gap-2.5 ml-auto">
                 <button id="mic-trigger-btn" class="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-semibold px-4 py-2.5 rounded-xl shadow-xl transition-all tracking-wide">
                     <i data-lucide="mic" class="w-4 h-4"></i>
@@ -133,7 +136,7 @@
 
     </div>
 
-    <!-- LIVE VIDEO STREAM OVERLAY (Hidden by default) -->
+    <!-- LIVE VIDEO STREAM OVERLAY -->
     <div id="video-overlay" class="fixed inset-0 z-40 bg-black/85 backdrop-blur-md hidden flex-col items-center justify-center p-6 transition-opacity duration-500 opacity-0 hide-on-sleep">
         <div class="w-full max-w-5xl relative flex flex-col items-center drop-shadow-2xl">
             <div class="w-full flex justify-between items-center mb-4">
@@ -150,7 +153,7 @@
         </div>
     </div>
 
-    <!-- RIGHT HAND CONTROL DRAWER (Slide-out menu - Now Slimmer) -->
+    <!-- RIGHT HAND CONTROL DRAWER -->
     <div id="control-drawer" class="fixed top-0 right-0 h-full w-[360px] max-w-full bg-black/92 backdrop-blur-xl border-l border-white/10 shadow-2xl z-50 translate-x-full transition-transform duration-300 ease-in-out p-6 flex flex-col justify-between hide-on-sleep">
 
         <div>
@@ -260,8 +263,8 @@
 
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
                         <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Wake Word Setup</div>
-                        <button id="train-wakeword-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">⚡ Train Wakeword</button>
-                        <p class="text-[9px] text-gray-400 leading-normal">Default is <b>Jesse</b>. Click train, and speak/type your custom word to save.</p>
+                        <button id="train-wakeword-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">⚡ Calibrate Wake Word</button>
+                        <p class="text-[9px] text-gray-400 leading-normal">Default is <b>Jesse</b>. Click Calibrate to record your custom voice trigger locally.</p>
                     </div>
 
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
@@ -277,7 +280,7 @@
         </div>
 
         <div class="text-center text-[9px] text-gray-500">
-            Smart Display Suite • Dual Backend/WASM Edition
+            Smart Display Suite • Offline TF.js Wake Edition
         </div>
     </div>
 
@@ -316,7 +319,7 @@
         let trainingMode = false;
         let selectedVoiceName = "";
         let userName = localStorage.getItem('echo_user_name') || "Friend";
-        let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || ["Buy groceries", "Water the plants"];
+        let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || ["Buy groceries", "Water the plants", "Prepare demo"];
         let awaitingNoteContent = false;
         let awaitingCommand = false; 
         let awaitingCommandTimeout = null; 
@@ -699,13 +702,19 @@
         });
 
         // ==============================================================================
-        // DUAL ENGINE: PYTHON BACKEND -> WASM BROWSER FALLBACK
+        // TENSORFLOW.JS LOCAL OFFLINE WAKEWORD ENGINE + PYTHON BACKEND CO-ROUTINE
         // ==============================================================================
         
         let isMicActive = false;
         let isRecordingCommand = false; 
         
-        let localRecognizer = null; // Web Speech API (Local Wake Word)
+        // TF.js Audio State
+        let baseRecognizer = null;
+        let transferRecognizer = null;
+        let isTfModelReady = false;
+        let isTrainingWord = false;
+        
+        // WebAudio API (Transcribe Payload)
         let audioContext = null;
         let processor = null;
         let audioBuffer = [];
@@ -714,83 +723,11 @@
         let mediaStream = null;
 
         const SILENCE_THRESHOLD = 0.02; 
-        const SILENCE_FRAMES_MAX = 6;  // Roughly 1.5 seconds of silence stops recording
-        const PRE_ROLL_FRAMES = 8;     // Maintains ~2 seconds of audio history so first words aren't cut off
+        const SILENCE_FRAMES_MAX = 6;  // Roughly 1.5s of silence triggers transmission
+        const PRE_ROLL_FRAMES = 8;     // Maintains ~2 seconds of pre-trigger buffer
 
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
-
-        // --- BROWSER WASM FALLBACK INITIALIZATION ---
-        let whisperReady = false;
-        let whisperWorker = null;
-
-        const whisperWorkerCode = `
-            let transcriber = null;
-            let pipeline = null;
-            let env = null;
-
-            self.onmessage = async (e) => {
-                if (e.data.type === 'init') {
-                    try {
-                        // FIX: Use dynamic import to bypass strict Blob Module CORS rules
-                        const transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
-                        pipeline = transformers.pipeline;
-                        env = transformers.env;
-                        env.allowLocalModels = false;
-
-                        transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
-                            quantized: true,
-                            progress_callback: (info) => {
-                                if (info.status === 'progress') {
-                                    self.postMessage({ type: 'progress', progress: info.progress });
-                                }
-                            }
-                        });
-                        self.postMessage({ type: 'status', message: 'Ready' });
-                    } catch (err) {
-                        self.postMessage({ type: 'error', message: err.message });
-                    }
-                } else if (e.data.type === 'transcribe') {
-                    if (!transcriber) return;
-                    try {
-                        let out = await transcriber(e.data.audio, { chunk_length_s: 30, stride_length_s: 5 });
-                        let textStr = "";
-                        if (Array.isArray(out)) {
-                            textStr = out.map(o => o.text).join(' ');
-                        } else if (out && out.text) {
-                            textStr = out.text;
-                        }
-                        self.postMessage({ type: 'result', text: textStr });
-                    } catch(err) {
-                        self.postMessage({ type: 'error', message: err.message });
-                    }
-                }
-            };
-        `;
-        const whisperBlob = new Blob([whisperWorkerCode], { type: 'application/javascript' });
-        const whisperWorkerUrl = URL.createObjectURL(whisperBlob);
-
-        function initWasmWhisper() {
-            if (whisperWorker) return;
-            
-            appendLog("[Starting background WASM Whisper pre-fetch...]");
-            // FIX: Removed { type: 'module' } to prevent browser from silently killing the worker
-            whisperWorker = new Worker(whisperWorkerUrl);
-            
-            whisperWorker.onmessage = (e) => {
-                if (e.data.type === 'status' && e.data.message === 'Ready') {
-                    whisperReady = true;
-                    appendLog("[Local WASM Fallback Engine Ready]");
-                } else if (e.data.type === 'result') {
-                    processTranscript(e.data.text || "", "WASM STT");
-                } else if (e.data.type === 'error') {
-                    console.error("Local Whisper WASM error:", e.data.message);
-                }
-            };
-            
-            whisperWorker.postMessage({ type: 'init' });
-        }
-
 
         function setMicState(state, text = null) {
             micTriggerBtn.classList.remove('bg-red-600', 'bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-yellow-500');
@@ -821,24 +758,147 @@
             } catch (e) {}
         }
 
+        // --- TF.JS MODEL STORAGE PROTOCOLS ---
+        function saveTransferDatasetToLocalStorage() {
+            try {
+                const serialized = transferRecognizer.serializeDataset();
+                // Transfer binary dataset to base64 string for safe local storage
+                const base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(serialized)));
+                localStorage.setItem(`tf_wakeword_model_${wakeword}`, base64);
+                appendLog("[Speech neural network saved to browser local storage]");
+            } catch (err) {
+                console.error("Model save failure:", err);
+            }
+        }
+
+        function loadTransferDatasetFromLocalStorage() {
+            try {
+                const base64 = localStorage.getItem(`tf_wakeword_model_${wakeword}`);
+                if (!base64) return false;
+                
+                const binaryStr = atob(base64);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                
+                transferRecognizer.deserializeDataset(bytes.buffer);
+                return true;
+            } catch (err) {
+                console.error("Model restore failure:", err);
+                return false;
+            }
+        }
+
+        // --- MIC CALIBRATION WORKFLOW ---
+        async function runInteractiveCalibration() {
+            setMicState('init', 'CALIBRATING...');
+            isTrainingWord = true;
+            
+            speak("Welcome! Let's calibrate your wake word triggers. Please remain completely silent for 2 seconds while I measure background noise.");
+            setBubbleState('info', "Calibrating background noise...");
+            await new Promise(r => setTimeout(r, 2500));
+            
+            // 1. Record Background Noise
+            setBubbleState('info', "Recording noise...");
+            for (let i = 0; i < 4; i++) {
+                await transferRecognizer.collectExample('_background_noise_');
+                await new Promise(r => setTimeout(r, 600));
+            }
+            
+            // 2. Record Wake Word Samples
+            speak(`Great. Now say "${wakeword}" after each chime.`);
+            for (let i = 1; i <= 3; i++) {
+                setBubbleState('info', `Say "${wakeword}" (Sample ${i}/3)...`);
+                await new Promise(r => setTimeout(r, 800));
+                playWakeChime();
+                await new Promise(r => setTimeout(r, 200));
+                await transferRecognizer.collectExample(wakeword);
+            }
+            
+            // 3. Train the Transfer Model
+            setBubbleState('info', "Training brain...");
+            speak("Processing voice biometrics...");
+            
+            await transferRecognizer.train({
+                epochs: 25,
+                callback: {
+                    onEpochEnd: (epoch, logs) => console.log(`Epoch ${epoch}: loss=${logs.loss}`)
+                }
+            });
+            
+            saveTransferDatasetToLocalStorage();
+            isTrainingWord = false;
+            
+            speak(`Calibration complete! You can now call me ${wakeword}.`);
+            setBubbleState('wakeword');
+            setMicState('auto', 'WAKEWORD MODE');
+        }
+
+        async function initSpeechModel() {
+            if (isTfModelReady) return true;
+            
+            setMicState('init', 'TF.JS BOOT...');
+            setBubbleState('info', 'Loading local neural net processor...');
+            
+            try {
+                baseRecognizer = speechCommands.create('BROWSER_FFT');
+                await baseRecognizer.ensureModelLoaded();
+                
+                transferRecognizer = baseRecognizer.createTransfer('jesse-wakeword');
+                isTfModelReady = true;
+                return true;
+            } catch (err) {
+                console.error("TF.js initialization failure:", err);
+                setBubbleState('info', "TensorFlow.js init failed. Check internet/CORS.");
+                setMicState('idle', 'TF ERROR');
+                return false;
+            }
+        }
+
+        function triggerCommandCapture() {
+            isRecordingCommand = true;
+            silenceFrames = 0;
+            audioBuffer = [...preRollBuffer]; 
+            
+            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
+                playWakeChime(); 
+            }
+            
+            requestAnimationFrame(() => {
+                setMicState('listening', 'RECORDING');
+                setBubbleState('listening');
+            });
+        }
+
         async function startHybridMicSystem() {
             try {
-                setMicState('init', 'INITIALIZING...');
+                // Ensure model is loaded first
+                const modelBooted = await initSpeechModel();
+                if (!modelBooted) return;
+
+                // WARM MIC STREAM ONLY IF WE DON'T ALREADY HAVE ONE
+                // Bypasses browser prompt loop by keeping stream warm and active in the background!
+                if (!mediaStream) {
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
                 
-                // Spin up WASM background worker gracefully on boot
-                initWasmWhisper();
-                
-                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-                const source = audioContext.createMediaStreamSource(mediaStream);
-                
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = 0; // Prevent speakers from echoing mic input
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
-                
-                source.connect(processor);
-                processor.connect(gainNode);
-                gainNode.connect(audioContext.destination);
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                } else if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                if (!processor) {
+                    const source = audioContext.createMediaStreamSource(mediaStream);
+                    const gainNode = audioContext.createGain();
+                    gainNode.gain.value = 0; 
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    source.connect(processor);
+                    processor.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                }
 
                 isMicActive = true;
                 isRecordingCommand = false;
@@ -846,9 +906,10 @@
                 preRollBuffer = [];
                 silenceFrames = 0;
 
-                // Continuously evaluate audio chunks
+                // Continuously feed audio into the Pre-Roll Buffer
                 processor.onaudioprocess = (e) => {
-                    if (!isMicActive || isAssistantSpeaking) return;
+                    // Bypass processing entirely when mic is muted or is speaking to avoid voice echo loop
+                    if (!isMicActive || isAssistantSpeaking || isTrainingWord) return;
 
                     const inputData = e.inputBuffer.getChannelData(0);
                     let sum = 0;
@@ -858,25 +919,24 @@
                     const rms = Math.sqrt(sum / inputData.length);
 
                     if (isRecordingCommand) {
-                        // PHASE 2: Command Capture
+                        // PHASE 2: Command capture mode
                         audioBuffer.push(new Float32Array(inputData));
 
                         if (rms < SILENCE_THRESHOLD) {
                             silenceFrames++;
                             if (silenceFrames >= SILENCE_FRAMES_MAX) {
-                                // User finished speaking their command!
                                 isRecordingCommand = false;
                                 requestAnimationFrame(() => {
                                     setMicState('processing', 'PROCESSING'); 
                                     setBubbleState('processing');
                                 });
-                                sendToBackendWithWasmFallback();
+                                sendToBackendPythonServer();
                             }
                         } else {
-                            silenceFrames = 0; // Reset silence if they keep talking
+                            silenceFrames = 0; 
                         }
                     } else {
-                        // PHASE 1: Wake Word Mode - maintain rolling pre-roll buffer in memory
+                        // PHASE 1: Silence Tracking and pre-roll maintaining
                         preRollBuffer.push(new Float32Array(inputData));
                         if (preRollBuffer.length > PRE_ROLL_FRAMES) {
                             preRollBuffer.shift();
@@ -884,88 +944,33 @@
                     }
                 };
 
-                // 2. Start Local Free Web Speech API purely for Wake Word detection
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (SpeechRecognition) {
-                    localRecognizer = new SpeechRecognition();
-                    localRecognizer.continuous = true;
-                    localRecognizer.interimResults = true; // Crucial for instant reaction
-
-                    localRecognizer.onresult = (event) => {
-                        if (isAssistantSpeaking || isRecordingCommand) return;
-
-                        let transcript = "";
-                        for (let i = event.resultIndex; i < event.results.length; i++) {
-                            transcript += event.results[i][0].transcript;
-                        }
-                        
-                        // Strip punctuation for safer wakeword matching
-                        transcript = transcript.replace(/[?!,;:]/g, '').replace(/(?<!\d)\.(?!\d)/g, '').replace(/\.+$/, '');
-                        
-                        const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
-                            ? /\b(jesse|jessie|jessy)\b/i 
-                            : new RegExp(`\\b${wakeword}\\b`, 'i');
-
-                        // If wake word is heard locally OR the user is in a 8-sec follow-up conversation
-                        if (wakewordRegex.test(transcript) || awaitingCommand || trainingMode || awaitingNoteContent) {
+                // Check if we have a calibrated model in cache
+                const modelRestored = loadTransferDatasetFromLocalStorage();
+                if (modelRestored) {
+                    // Start 100% local, lightweight listening loops
+                    if (!transferRecognizer.isListening()) {
+                        await transferRecognizer.listen(result => {
+                            if (isRecordingCommand || isAssistantSpeaking || isTrainingWord || !isMicActive) return;
                             
-                            isRecordingCommand = true;
-                            silenceFrames = 0;
-                            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
-                            audioBuffer = [...preRollBuffer]; 
+                            const scores = Array.from(result.scores);
+                            const wordIndex = scores.indexOf(Math.max(...scores));
+                            const detectedWord = transferRecognizer.wordLabels()[wordIndex];
                             
-                            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
-                                playWakeChime(); 
+                            if (detectedWord === wakeword && result.scores[wordIndex] > 0.85) {
+                                triggerCommandCapture();
                             }
-                            
-                            requestAnimationFrame(() => {
-                                setMicState('listening', 'RECORDING');
-                                setBubbleState('listening');
-                            });
-                        }
-                    };
+                        }, { probabilityThreshold: 0.85 });
+                    }
 
-                    localRecognizer.onerror = (event) => {
-                        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-                            console.warn("Local Web Speech Error:", event.error);
-                            stopHybridMicSystem();
-                            setBubbleState('info', "Microphone access denied.");
-                        }
-                    };
-
-                    localRecognizer.onend = () => {
-                        // Smoothly reboot the local engine in background to prevent browser stalls
-                        if (isMicActive) {
-                            setTimeout(() => {
-                                if (isMicActive) {
-                                    // Prevent 10-second prompt spam on strict browsers or file:/// protocol
-                                    if (navigator.permissions && navigator.permissions.query) {
-                                        navigator.permissions.query({ name: 'microphone' }).then(perm => {
-                                            if (perm.state === 'granted') {
-                                                try { localRecognizer.start(); } catch(e){}
-                                            } else {
-                                                stopHybridMicSystem();
-                                                setBubbleState('info', "Mic permission not saved globally. Click LISTEN.");
-                                            }
-                                        }).catch(() => {
-                                            try { localRecognizer.start(); } catch(e){}
-                                        });
-                                    } else {
-                                        try { localRecognizer.start(); } catch(e){}
-                                    }
-                                }
-                            }, 1000); 
-                        }
-                    };
-
-                    localRecognizer.start();
                     setMicState('auto', 'WAKEWORD MODE');
                     setBubbleState('wakeword');
-                    appendLog("[Hybrid Engine Active]");
+                    appendLog("[Neural Wake Word Engine Listening]");
                 } else {
-                    // Fallback for Firefox/Safari browsers missing Speech API
-                    setMicState('auto', 'PUSH TO TALK');
-                    setBubbleState('info', "Local wake word unsupported. Click LISTEN to command.");
+                    // Guide user to do quick local training
+                    await runInteractiveCalibration();
+                    // Retrigger mic initialization securely
+                    stopHybridMicSystem();
+                    startHybridMicSystem();
                 }
 
             } catch (err) {
@@ -975,7 +980,7 @@
             }
         }
 
-        async function sendToBackendWithWasmFallback() {
+        async function sendToBackendPythonServer() {
             let totalLength = audioBuffer.reduce((acc, val) => acc + val.length, 0);
             let flattenedFloat32 = new Float32Array(totalLength);
             let offset = 0;
@@ -985,7 +990,7 @@
             }
             audioBuffer = [];
 
-            // Convert Float32Array to Int16Array for Python Server Backend
+            // Convert Float32Array to Int16Array for Local Python Server Backend
             const int16Buffer = new Int16Array(flattenedFloat32.length);
             for (let i = 0; i < flattenedFloat32.length; i++) {
                 let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
@@ -993,8 +998,7 @@
             }
 
             try {
-                // PRIMARY ROUTE: Try local python server first! (Instant speed)
-                const response = await fetch('http://127.0.0.1:5000/transcribe', {
+                const response = await fetch('http://localhost:5000/transcribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/octet-stream' },
                     body: int16Buffer
@@ -1011,15 +1015,9 @@
                 }
 
             } catch (err) {
-                // FALLBACK ROUTE: Backend failed/offline. Use offline WASM in browser.
-                console.warn("Python Server offline. Falling back to local WASM Engine!", err);
-                if (whisperReady && whisperWorker) {
-                    setBubbleState('info', "Server unreachable. Using offline WASM fallback...");
-                    whisperWorker.postMessage({ type: 'transcribe', audio: flattenedFloat32 });
-                } else {
-                    setBubbleState('info', "Backend and WASM offline. Cannot transcribe.");
-                    resetUIState();
-                }
+                console.warn("Python Server offline:", err);
+                setBubbleState('info', "Local STT Server offline. Ensure local_stt_server.py is running!");
+                resetUIState();
             }
         }
 
@@ -1052,25 +1050,16 @@
             }, 1500);
         }
 
+        // Bypasses hardware stream deletion to completely eliminate recurring prompts!
         function stopHybridMicSystem() {
             isMicActive = false;
             isRecordingCommand = false;
             
-            if (localRecognizer) {
-                localRecognizer.onend = null;
-                localRecognizer.stop();
-            }
-            if (processor) {
-                processor.disconnect();
-                processor = null;
+            if (transferRecognizer && transferRecognizer.isListening()) {
+                transferRecognizer.stopListening();
             }
             if (audioContext) {
-                audioContext.close();
-                audioContext = null;
-            }
-            if (mediaStream) {
-                mediaStream.getTracks().forEach(track => track.stop());
-                mediaStream = null;
+                audioContext.suspend();
             }
             
             setMicState('idle', 'LISTEN');
@@ -1083,12 +1072,7 @@
                 startHybridMicSystem();
             } else if (!isRecordingCommand) {
                 // Allows user to manually bypass the wake word (Push to Talk)
-                isRecordingCommand = true;
-                silenceFrames = 0;
-                audioBuffer = [...preRollBuffer];
-                playWakeChime();
-                setMicState('listening', 'RECORDING');
-                setBubbleState('listening');
+                triggerCommandCapture();
             } else {
                 stopHybridMicSystem();
             }
@@ -1124,7 +1108,7 @@
 
         function parseDurationToSeconds(text) {
             const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|ours)/i;
+            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
             const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
             const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
 
@@ -1276,7 +1260,7 @@
                 const options = { weekday: 'long', month: 'long', day: 'numeric' };
                 const dateStr = now.toLocaleDateString('en-US', options);
                 const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                speak(`It is currently ${timeStr} on ${dateStr}.`);
+                speak(`It is currently {timeStr} on {dateStr}.`);
                 return;
             }
 
@@ -1863,17 +1847,26 @@
             });
         });
 
+        // Auto-Initialize Mic if Permissions are Already Granted
+        if (navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({ name: 'microphone' }).then((perm) => {
+                if (perm.state === 'granted') {
+                    startHybridMicSystem();
+                }
+            }).catch(e => console.warn(e));
+        }
+
         function switchTab(tabId) {
             const tabBtn = Array.from(tabs).find(t => t.getAttribute('data-target') === tabId);
             if (tabBtn) tabBtn.click();
         }
 
         function triggerWakewordTraining() {
+            // Retrain TF.js audio neural network
             trainingMode = true;
             switchTab('config-tab');
             openDrawer();
-            setBubbleState('info', "Ready to learn a new name! Please say or type your desired new wakeword now.");
-            speak("Ready to learn a new name! Please say or type your desired new wakeword now.");
+            runInteractiveCalibration();
         }
         trainWakewordBtn.addEventListener('click', triggerWakewordTraining);
 
@@ -1896,15 +1889,6 @@
             logSpan.textContent = text;
             consoleLogs.appendChild(logSpan);
             consoleLogs.scrollTop = consoleLogs.scrollHeight;
-        }
-
-        // Auto-Initialize Mic if Permissions are Already Granted
-        if (navigator.permissions && navigator.permissions.query) {
-            navigator.permissions.query({ name: 'microphone' }).then((perm) => {
-                if (perm.state === 'granted') {
-                    startHybridMicSystem();
-                }
-            }).catch(e => console.warn(e));
         }
 
         // Initialize UI State
