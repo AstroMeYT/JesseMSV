@@ -14,7 +14,7 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- PeerJS -->
@@ -26,6 +26,10 @@
         body { font-family: 'Inter', sans-serif; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        /* Calendar UI refinements */
+        .calendar-day-active {
+            box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+        }
     </style>
 </head>
 <body class="h-full text-white flex flex-col select-none">
@@ -36,8 +40,8 @@
             <div>
                 <h1 class="text-xl font-bold text-white tracking-tight">Assistant Manager</h1>
                 <div class="flex items-center gap-1.5 mt-1">
-                    <span id="status-dot" class="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
-                    <span id="status-text" class="text-xs text-gray-400 font-medium tracking-wide uppercase">Disconnected</span>
+                    <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+                    <span id="status-text" class="text-xs text-gray-400 font-semibold tracking-wide uppercase">Disconnected</span>
                 </div>
             </div>
             <button id="scan-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white p-3 rounded-full shadow-lg transition-all active:scale-95">
@@ -64,6 +68,39 @@
         <!-- CALENDAR TAB -->
         <div id="tab-calendar" class="tab-content active space-y-6">
             
+            <!-- GRID MONTHLY CALENDAR CONTAINER -->
+            <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700/50 shadow-md">
+                <!-- Calendar Header -->
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="calendar-month-year" class="text-sm font-bold text-white tracking-wider uppercase">June 2026</h3>
+                    <div class="flex gap-1">
+                        <button id="prev-month-btn" class="p-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 active:scale-95 transition-all text-gray-300 hover:text-white">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </button>
+                        <button id="next-month-btn" class="p-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 active:scale-95 transition-all text-gray-300 hover:text-white">
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Weekday Headers -->
+                <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">
+                    <div>Su</div>
+                    <div>Mo</div>
+                    <div>Tu</div>
+                    <div>We</div>
+                    <div>Th</div>
+                    <div>Fr</div>
+                    <div>Sa</div>
+                </div>
+
+                <!-- Days Grid -->
+                <div id="calendar-days-grid" class="grid grid-cols-7 gap-1">
+                    <!-- Days loaded dynamically by JavaScript -->
+                </div>
+            </div>
+
+            <!-- ADD EVENT PANEL -->
             <div class="bg-gray-800 rounded-2xl p-5 border border-gray-700/50 shadow-sm">
                 <h3 class="text-sm font-bold text-cyan-400 uppercase tracking-wider mb-4 flex items-center gap-2">
                     <i data-lucide="calendar-plus" class="w-4 h-4"></i> Add Event
@@ -75,12 +112,18 @@
                 </div>
             </div>
 
+            <!-- SCHEDULE SECTION -->
             <div>
                 <div class="flex justify-between items-end mb-4 px-1">
-                    <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">Your Schedule</h3>
-                    <button id="sync-btn" class="text-cyan-400 hover:text-cyan-300 text-xs font-semibold flex items-center gap-1 active:scale-95">
-                        <i data-lucide="refresh-cw" class="w-3 h-3"></i> Sync
-                    </button>
+                    <h3 id="schedule-title" class="text-sm font-bold text-gray-400 uppercase tracking-wider">Schedule</h3>
+                    <div class="flex gap-2">
+                        <button id="toggle-filter-btn" class="text-cyan-400 hover:text-cyan-300 text-xs font-semibold flex items-center gap-1 active:scale-95">
+                            <i data-lucide="filter" class="w-3.5 h-3.5"></i> <span id="filter-status-label">All Events</span>
+                        </button>
+                        <button id="sync-btn" class="text-gray-400 hover:text-white text-xs font-semibold flex items-center gap-1 active:scale-95">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Sync
+                        </button>
+                    </div>
                 </div>
                 
                 <div id="calendar-list" class="space-y-3">
@@ -145,13 +188,27 @@
                 </div>
             </div>
 
-            <div class="bg-gray-800 rounded-2xl p-5 border border-gray-700/50 shadow-sm">
-                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Manual Connection</h3>
+            <!-- NETWORKING DIAGNOSTICS & MANUAL CONNECT -->
+            <div class="bg-gray-800 rounded-2xl p-5 border border-gray-700/50 shadow-sm space-y-4">
+                <h3 class="text-sm font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
+                    <i data-lucide="network" class="w-4 h-4"></i> Link Display
+                </h3>
+                
                 <div class="flex gap-2">
                     <input type="text" id="manual-peer-id" placeholder="Assistant Peer ID" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white outline-none focus:border-cyan-500 transition-all">
-                    <button id="manual-connect-btn" class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 rounded-xl transition-all shadow-md active:scale-95">Link</button>
+                    <button id="manual-connect-btn" class="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold px-4 rounded-xl transition-all shadow-md active:scale-95">Link</button>
                 </div>
-                <button id="disconnect-btn" class="w-full mt-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-semibold py-2 rounded-xl transition-all active:scale-95">Disconnect Assistant</button>
+                
+                <button id="disconnect-btn" class="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-semibold py-2 rounded-xl transition-all active:scale-95">Disconnect Assistant</button>
+                
+                <!-- DIAGNOSTICS LOG -->
+                <div class="h-px bg-gray-700/50 w-full"></div>
+                <div>
+                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Network Logs</h4>
+                    <div id="diagnostics-log" class="bg-black/50 border border-gray-700 rounded-xl p-3 h-28 overflow-y-auto text-[10px] font-mono text-gray-300 space-y-1">
+                        <div>[Init] Starting diagnostic listener...</div>
+                    </div>
+                </div>
             </div>
 
         </div>
@@ -190,6 +247,12 @@
             allowRadio: true
         };
         let savedAssistantId = localStorage.getItem('manager_assistant_id');
+        
+        // Navigation & Filtering State
+        let currentYear = new Date().getFullYear();
+        let currentMonth = new Date().getMonth(); // 0-based
+        let selectedDateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        let calendarFilterMode = 'day'; // 'day' or 'all'
 
         // DOM Elements
         const statusText = document.getElementById('status-text');
@@ -205,27 +268,144 @@
         const manualIdInput = document.getElementById('manual-peer-id');
         const manualConnectBtn = document.getElementById('manual-connect-btn');
         const disconnectBtn = document.getElementById('disconnect-btn');
+        const diagnosticsLog = document.getElementById('diagnostics-log');
+        const toggleFilterBtn = document.getElementById('toggle-filter-btn');
+        const filterStatusLabel = document.getElementById('filter-status-label');
+        const scheduleTitle = document.getElementById('schedule-title');
+
+        // Calendar Nav Elements
+        const calMonthYearLabel = document.getElementById('calendar-month-year');
+        const prevMonthBtn = document.getElementById('prev-month-btn');
+        const nextMonthBtn = document.getElementById('next-month-btn');
+        const calDaysGrid = document.getElementById('calendar-days-grid');
 
         // Perm Toggles
         const permWeather = document.getElementById('perm-weather');
         const permTimers = document.getElementById('perm-timers');
         const permRadio = document.getElementById('perm-radio');
 
-        // Default Date
-        eventDateInput.value = new Date().toISOString().split('T')[0];
+        // Default Date Picker value setup
+        eventDateInput.value = selectedDateStr;
 
-        // Init UI
+        // Init UI States
         permWeather.checked = permissions.allowWeather;
         permTimers.checked = permissions.allowTimers;
         permRadio.checked = permissions.allowRadio;
-        renderCalendar();
+
+        function addLog(text) {
+            const entry = document.createElement('div');
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            entry.textContent = `[${timestamp}] ${text}`;
+            diagnosticsLog.appendChild(entry);
+            diagnosticsLog.scrollTop = diagnosticsLog.scrollHeight;
+        }
 
         // ==============================================================================
-        // PEER.JS NETWORKING
+        // DYNAMIC MONTHLY CALENDAR GRID ENGINE
+        // ==============================================================================
+        const monthNames = [
+            "January", "February", "March", "April", "May", "June", 
+            "July", "August", "September", "October", "November", "December"
+        ];
+
+        function renderInteractiveCalendar() {
+            calDaysGrid.innerHTML = '';
+            calMonthYearLabel.textContent = `${monthNames[currentMonth]} ${currentYear}`;
+
+            // Get first day of the month and total days
+            const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
+            const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const prevMonthTotalDays = new Date(currentYear, currentMonth, 0).getDate();
+
+            const today = new Date();
+            const todayStr = today.toISOString().split('T')[0];
+
+            // Render Previous Month's trailing days (for alignment)
+            for (let i = firstDayIndex; i > 0; i--) {
+                const dayNum = prevMonthTotalDays - i + 1;
+                const dummyDay = document.createElement('div');
+                dummyDay.className = "p-2 text-center text-xs text-gray-600 font-light pointer-events-none";
+                dummyDay.textContent = dayNum;
+                calDaysGrid.appendChild(dummyDay);
+            }
+
+            // Render Current Month's active days
+            for (let day = 1; day <= totalDays; day++) {
+                const dayDiv = document.createElement('div');
+                
+                // Formulate key identifier for local date
+                const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                
+                const hasEvents = calendarEvents.some(ev => ev.date === dateKey);
+                const isSelected = dateKey === selectedDateStr;
+                const isToday = dateKey === todayStr;
+
+                dayDiv.className = `p-2.5 text-center text-xs rounded-xl relative cursor-pointer active:scale-95 transition-all flex flex-col items-center justify-center font-medium `;
+                
+                if (isSelected) {
+                    dayDiv.className += "bg-cyan-500 text-black font-bold calendar-day-active";
+                } else if (isToday) {
+                    dayDiv.className += "border border-cyan-500/50 bg-cyan-500/10 text-cyan-400";
+                } else {
+                    dayDiv.className += "bg-gray-700/30 hover:bg-gray-700/70 text-gray-200";
+                }
+
+                // Day Label
+                const daySpan = document.createElement('span');
+                daySpan.textContent = day;
+                dayDiv.appendChild(daySpan);
+
+                // Event Badges
+                if (hasEvents) {
+                    const badge = document.createElement('span');
+                    badge.className = `w-1 h-1 rounded-full absolute bottom-1 ${isSelected ? 'bg-black' : 'bg-cyan-400 shadow-[0_0_6px_#06b6d4]'}`;
+                    dayDiv.appendChild(badge);
+                }
+
+                dayDiv.addEventListener('click', () => {
+                    selectedDateStr = dateKey;
+                    eventDateInput.value = dateKey;
+                    renderInteractiveCalendar();
+                    renderSchedule();
+                });
+
+                calDaysGrid.appendChild(dayDiv);
+            }
+        }
+
+        prevMonthBtn.addEventListener('click', () => {
+            currentMonth--;
+            if (currentMonth < 0) {
+                currentMonth = 11;
+                currentYear--;
+            }
+            renderInteractiveCalendar();
+        });
+
+        nextMonthBtn.addEventListener('click', () => {
+            currentMonth++;
+            if (currentMonth > 11) {
+                currentMonth = 0;
+                currentYear++;
+            }
+            renderInteractiveCalendar();
+        });
+
+        // ==============================================================================
+        // PEER.JS NETWORK OVERHAUL
         // ==============================================================================
         function initPeer() {
-            // Provide explicit Google STUN servers to avoid standard WebRTC negotiation failures
+            addLog("Attempting connection to signaling directory...");
+            updateStatus('Resolving...', 'bg-yellow-500');
+
+            // Force production-grade broker configurations with manual stun negotiations
             peer = new Peer({
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                debug: 3,
                 config: {
                     'iceServers': [
                         { urls: 'stun:stun.l.google.com:19302' },
@@ -235,7 +415,7 @@
             });
             
             peer.on('open', (id) => {
-                console.log('Manager Peer ID:', id);
+                addLog(`Registered securely on signaling broker with ID: ${id}`);
                 if (savedAssistantId) {
                     connectToAssistant(savedAssistantId);
                 } else {
@@ -244,77 +424,84 @@
             });
 
             peer.on('error', (err) => {
-                console.error('Peer Error:', err.type, err);
-                // Robust error handling to prevent abort crashes
+                addLog(`[Error Response] Code: ${err.type}`);
+                console.error('PeerJS Internal Error Details:', err);
+                
                 if (err.type === 'peer-unavailable') {
                     updateStatus('Assistant Offline', 'bg-red-500');
+                    addLog("Warning: Could not bind to the Assistant ID. Is the assistant active?");
                     assistantConn = null;
                 } else if (err.type === 'network' || err.type === 'server-error') {
                     updateStatus('Network Error', 'bg-red-500');
+                    addLog("Network negotiation failed. Attempting broker restart in 6 seconds...");
                     setTimeout(() => {
                         if (peer && !peer.destroyed) peer.reconnect();
-                    }, 5000);
+                    }, 6000);
                 } else {
-                    updateStatus('Connection Error', 'bg-red-500');
+                    updateStatus('Signal Failure', 'bg-red-500');
                 }
             });
 
             peer.on('disconnected', () => {
                 updateStatus('Disconnected', 'bg-red-500');
+                addLog("Lost broker connection. Recalibrating tunnels...");
                 setTimeout(() => {
-                    if(peer && !peer.destroyed) peer.reconnect();
-                }, 3000);
+                    if (peer && !peer.destroyed) peer.reconnect();
+                }, 4000);
             });
         }
 
         function connectToAssistant(assistantId) {
             if (!peer) return;
             
-            // Clean the scanned ID of any hidden spaces or newlines that cause connection aborts
             const cleanId = assistantId.trim();
-            
+            addLog(`Dialing tunnels for display: ${cleanId}`);
             updateStatus('Connecting...', 'bg-yellow-500');
             
-            // Standard connection (removed strict reliable constraint for better mobile compatibility)
-            assistantConn = peer.connect(cleanId);
+            // Initiate raw data connection
+            assistantConn = peer.connect(cleanId, {
+                reliable: true
+            });
 
             assistantConn.on('open', () => {
+                addLog("Secure WebRTC tunnel successfully established! Handshake complete.");
                 updateStatus('Connected', 'bg-green-500');
                 localStorage.setItem('manager_assistant_id', cleanId);
                 savedAssistantId = cleanId;
                 
-                // Immediately sync our truth to the assistant
                 pushSyncData();
             });
 
             assistantConn.on('data', (data) => {
                 if (data.type === 'sync') {
-                    // Assistant sent us data (e.g. voice added an event)
+                    addLog("Received calendar and state payload from display.");
                     if (data.calendar) {
                         calendarEvents = data.calendar;
                         localStorage.setItem('manager_calendar', JSON.stringify(calendarEvents));
-                        renderCalendar();
+                        renderInteractiveCalendar();
+                        renderSchedule();
                     }
-                    // Flash sync button to show activity
                     syncBtn.classList.add('text-green-400');
                     setTimeout(() => syncBtn.classList.remove('text-green-400'), 500);
                 }
             });
 
             assistantConn.on('close', () => {
+                addLog("Tunnel was explicitly closed by remote client.");
                 updateStatus('Disconnected', 'bg-red-500');
                 assistantConn = null;
             });
             
             assistantConn.on('error', (err) => {
-                console.warn('Connection Error:', err);
+                addLog(`RTC Data Channel Error: ${err}`);
                 assistantConn = null;
-                updateStatus('Connection Dropped', 'bg-red-500');
+                updateStatus('Dropped', 'bg-red-500');
             });
         }
 
         function pushSyncData() {
             if (assistantConn && assistantConn.open) {
+                addLog("Pushed full calendar payload and system permissions to display.");
                 assistantConn.send({
                     type: 'sync',
                     calendar: calendarEvents,
@@ -325,7 +512,7 @@
 
         function updateStatus(text, colorClass) {
             statusText.textContent = text;
-            statusDot.className = `w-2 h-2 rounded-full ${colorClass} shadow-[0_0_8px_currentColor]`;
+            statusDot.className = `w-2.5 h-2.5 rounded-full ${colorClass} shadow-[0_0_8px_currentColor]`;
         }
 
         // ==============================================================================
@@ -336,8 +523,9 @@
         scanBtn.addEventListener('click', () => {
             scannerOverlay.classList.remove('hidden');
             scannerOverlay.classList.add('flex');
+            addLog("Initialized local camera stack.");
             
-            html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
+            html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 15, qrbox: {width: 250, height: 250} }, false);
             html5QrcodeScanner.render(onScanSuccess, onScanFailure);
         });
 
@@ -352,20 +540,34 @@
         }
 
         function onScanSuccess(decodedText, decodedResult) {
-            console.log(`Scan result: ${decodedText}`);
+            addLog(`QR Decoded successfully: ${decodedText}`);
             closeScanner();
             connectToAssistant(decodedText);
         }
 
         function onScanFailure(error) {
-            // handle scan failure quietly
+            // silent diagnostic tracking
         }
 
         // ==============================================================================
-        // UI INTERACTIONS
+        // UI AND SCHEDULE LIST RENDERING
         // ==============================================================================
         
-        // Navigation
+        // Filter Button Engine (Day vs All Schedule View)
+        toggleFilterBtn.addEventListener('click', () => {
+            if (calendarFilterMode === 'day') {
+                calendarFilterMode = 'all';
+                filterStatusLabel.textContent = "Selected Day";
+                toggleFilterBtn.classList.replace('text-cyan-400', 'text-gray-400');
+            } else {
+                calendarFilterMode = 'day';
+                filterStatusLabel.textContent = "All Events";
+                toggleFilterBtn.classList.replace('text-gray-400', 'text-cyan-400');
+            }
+            renderSchedule();
+        });
+
+        // Navigation Menu
         const navBtns = document.querySelectorAll('.nav-btn');
         const tabContents = document.querySelectorAll('.tab-content');
 
@@ -390,16 +592,16 @@
             
             if (title && date) {
                 calendarEvents.push({ title, date });
-                // Sort by date naturally
+                // Sort chronologically
                 calendarEvents.sort((a, b) => new Date(a.date) - new Date(b.date));
                 
                 localStorage.setItem('manager_calendar', JSON.stringify(calendarEvents));
-                renderCalendar();
+                renderInteractiveCalendar();
+                renderSchedule();
                 pushSyncData();
                 
                 eventTitleInput.value = '';
                 
-                // Visual feedback
                 addEventBtn.textContent = "Saved!";
                 addEventBtn.classList.replace('bg-cyan-600', 'bg-green-500');
                 setTimeout(() => {
@@ -409,25 +611,38 @@
             }
         });
 
-        // Render Calendar
-        function renderCalendar() {
+        // Render Schedule List Below Calendar
+        function renderSchedule() {
             calendarList.innerHTML = '';
+
+            let filteredEvents = calendarEvents;
+            if (calendarFilterMode === 'day') {
+                filteredEvents = calendarEvents.filter(ev => ev.date === selectedDateStr);
+                
+                // Format target date nicely for label
+                const parts = selectedDateStr.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                const niceTitle = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                scheduleTitle.textContent = `Schedule: ${niceTitle}`;
+            } else {
+                scheduleTitle.textContent = "All Timelines";
+            }
             
-            if (calendarEvents.length === 0) {
-                calendarList.innerHTML = `<div class="text-center text-sm text-gray-500 py-8 bg-gray-800/50 rounded-2xl border border-gray-700/50 border-dashed">No events saved.</div>`;
+            if (filteredEvents.length === 0) {
+                calendarList.innerHTML = `<div class="text-center text-sm text-gray-500 py-8 bg-gray-800/50 rounded-2xl border border-gray-700/50 border-dashed">No events saved for this period.</div>`;
                 return;
             }
 
             // Group events by date
-            const grouped = calendarEvents.reduce((acc, curr) => {
+            const grouped = filteredEvents.reduce((acc, curr) => {
                 if (!acc[curr.date]) acc[curr.date] = [];
                 acc[curr.date].push(curr);
                 return acc;
             }, {});
 
             for (const [date, events] of Object.entries(grouped)) {
-                // Parse date for nice display
-                const d = new Date(date + "T00:00:00"); // Force local timezone interpretation
+                const parts = date.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2]);
                 const dateString = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
                 
                 const groupEl = document.createElement('div');
@@ -440,7 +655,7 @@
                     item.innerHTML = `
                         <span class="text-sm text-gray-200 font-medium">${ev.title}</span>
                         <button class="text-red-400 hover:text-red-300 p-1.5 bg-red-400/10 rounded-lg transition-colors delete-btn" data-title="${ev.title}" data-date="${ev.date}">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            <i data-lucide="trash-2" class="w-4.5 h-4.5"></i>
                         </button>
                     `;
                     groupEl.appendChild(item);
@@ -449,7 +664,7 @@
             }
             lucide.createIcons();
 
-            // Attach delete listeners
+            // Attach deletion bindings
             document.querySelectorAll('.delete-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const btnEl = e.currentTarget;
@@ -458,13 +673,14 @@
                     
                     calendarEvents = calendarEvents.filter(ev => !(ev.title === title && ev.date === date));
                     localStorage.setItem('manager_calendar', JSON.stringify(calendarEvents));
-                    renderCalendar();
+                    renderInteractiveCalendar();
+                    renderSchedule();
                     pushSyncData();
                 });
             });
         }
 
-        // Permissions Handlers
+        // Permissions toggling
         function handlePermChange() {
             permissions = {
                 allowWeather: permWeather.checked,
@@ -472,6 +688,7 @@
                 allowRadio: permRadio.checked
             };
             localStorage.setItem('manager_perms', JSON.stringify(permissions));
+            addLog("System permissions modified.");
             pushSyncData();
         }
 
@@ -479,7 +696,7 @@
         permTimers.addEventListener('change', handlePermChange);
         permRadio.addEventListener('change', handlePermChange);
 
-        // Manual Connect
+        // Manual connect handler
         manualConnectBtn.addEventListener('click', () => {
             const id = manualIdInput.value.trim();
             if (id) {
@@ -488,7 +705,7 @@
             }
         });
 
-        // Disconnect
+        // Disconnect sequence
         disconnectBtn.addEventListener('click', () => {
             if (assistantConn) {
                 assistantConn.close();
@@ -496,9 +713,10 @@
             localStorage.removeItem('manager_assistant_id');
             savedAssistantId = null;
             updateStatus('Disconnected', 'bg-red-500');
+            addLog("Cleared paired assistant cache.");
         });
 
-        // Sync button forced
+        // Manual sync forced trigger
         syncBtn.addEventListener('click', () => {
             pushSyncData();
             syncBtn.classList.add('animate-spin');
@@ -506,6 +724,8 @@
         });
 
         // Boot
+        renderInteractiveCalendar();
+        renderSchedule();
         initPeer();
 
     </script>
