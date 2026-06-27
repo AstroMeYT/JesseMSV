@@ -705,7 +705,6 @@
         let isMicActive = false;
         let isRecordingCommand = false; 
         
-        let localRecognizer = null; // Web Speech API (Local Wake Word)
         let audioContext = null;
         let processor = null;
         let audioBuffer = [];
@@ -720,24 +719,97 @@
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
 
-        // --- BROWSER WASM FALLBACK INITIALIZATION ---
-        let whisperReady = false;
-        let whisperWorker = null;
-
-        const whisperWorkerCode = `
-            let transcriber = null;
-            let pipeline = null;
-            let env = null;
-
+        // --- BROWSER VOSK (WAKE WORD) INITIALIZATION ---
+        let voskReady = false;
+        let voskWorker = null;
+        
+        const voskWorkerCode = `
+            let recognizer = null;
             self.onmessage = async (e) => {
                 if (e.data.type === 'init') {
                     try {
-                        // FIX: Use dynamic import to bypass strict Blob Module CORS rules
-                        const transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
-                        pipeline = transformers.pipeline;
-                        env = transformers.env;
-                        env.allowLocalModels = false;
+                        const vosk = await import('https://cdn.jsdelivr.net/npm/vosk-browser/+esm');
+                        
+                        // Load the local zip file passed from the main thread
+                        const modelUrl = e.data.modelUrl;
+                        
+                        const model = await vosk.createModel(modelUrl);
+                        
+                        // Restrict Vosk completely to our wake words and unk for noise filtering, making it blazing fast
+                        const wakeWords = '["jesse", "jessie", "jessy", "jes", "yes", "stop", "cancel", "[unk]"]';
+                        recognizer = new model.KaldiRecognizer(16000, wakeWords);
+                        
+                        self.postMessage({ type: 'status', message: 'Ready' });
+                    } catch (err) {
+                        self.postMessage({ type: 'error', message: err.toString() });
+                    }
+                } else if (e.data.type === 'process') {
+                    if (!recognizer) return;
+                    try {
+                        const isFinal = recognizer.acceptWaveform(e.data.audio);
+                        let text = isFinal ? recognizer.getResult().text : recognizer.getPartialResult().partial;
+                        if (text) {
+                            self.postMessage({ type: 'result', text: text });
+                        }
+                    } catch(err) {}
+                } else if (e.data.type === 'reset') {
+                    if (recognizer) recognizer.reset();
+                }
+            };
+        `;
+        const voskBlob = new Blob([voskWorkerCode], { type: 'application/javascript' });
+        const voskWorkerUrl = URL.createObjectURL(voskBlob);
 
+        async function initVoskWakeWord() {
+            return new Promise((resolve) => {
+                if (voskWorker) return resolve(voskReady);
+                
+                appendLog("[Starting background Vosk Wake Word pre-fetch...]");
+                // Disable module mode because Safari/Firefox local files block inline module workers
+                voskWorker = new Worker(voskWorkerUrl);
+                
+                // Get absolute directory path of the current index.html to fetch the local .zip
+                let baseUrl = window.location.href.split('/').slice(0, -1).join('/');
+                const localModelUrl = baseUrl + '/vosk-model.zip';
+                
+                voskWorker.onmessage = (e) => {
+                    if (e.data.type === 'status' && e.data.message === 'Ready') {
+                        voskReady = true;
+                        appendLog("[Local Vosk Wake Word Engine Ready]");
+                        resolve(true);
+                    } else if (e.data.type === 'result' && !isRecordingCommand && !isAssistantSpeaking) {
+                        const transcript = e.data.text;
+                        
+                        const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
+                            ? /\b(jesse|jessie|jessy|jes)\b/i 
+                            : new RegExp(`\\b${wakeword}\\b`, 'i');
+
+                        // Trigger Phase 2 if Wake Word is matched, OR if we are waiting for a follow-up answer
+                        let isTrigger = false;
+                        if (wakewordRegex.test(transcript)) isTrigger = true;
+                        if ((awaitingCommand || trainingMode || awaitingNoteContent) && transcript.length > 0) isTrigger = true;
+
+                        if (isTrigger) {
+                            triggerCommandCapture();
+                        }
+                    } else if (e.data.type === 'error') {
+                        console.error("Local Vosk error:", e.data.message);
+                        resolve(false);
+                    }
+                };
+        // --- BROWSER WASM WHISPER (SINGLE MODEL) INITIALIZATION ---
+        let whisperReady = false;
+        let whisperWorker = null;
+
+        // Since you are on GitHub Pages (HTTPS), we can safely use a standard Module Worker!
+        const whisperWorkerCode = `
+            import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+            env.allowLocalModels = false;
+
+            let transcriber = null;
+            self.onmessage = async (e) => {
+                if (e.data.type === 'init') {
+                    try {
                         transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
                             quantized: true,
                             progress_callback: (info) => {
@@ -750,17 +822,17 @@
                     } catch (err) {
                         self.postMessage({ type: 'error', message: err.message });
                     }
-                } else if (e.data.type === 'transcribe') {
+                } else if (e.data.type === 'transcribe' || e.data.type === 'transcribe_wakeword') {
                     if (!transcriber) return;
                     try {
                         let out = await transcriber(e.data.audio, { chunk_length_s: 30, stride_length_s: 5 });
-                        let textStr = "";
-                        if (Array.isArray(out)) {
-                            textStr = out.map(o => o.text).join(' ');
-                        } else if (out && out.text) {
-                            textStr = out.text;
+                        let textStr = Array.isArray(out) ? out.map(o => o.text).join(' ') : (out.text || "");
+                        
+                        if (e.data.type === 'transcribe_wakeword') {
+                            self.postMessage({ type: 'wakeword_result', text: textStr });
+                        } else {
+                            self.postMessage({ type: 'result', text: textStr });
                         }
-                        self.postMessage({ type: 'result', text: textStr });
                     } catch(err) {
                         self.postMessage({ type: 'error', message: err.message });
                     }
@@ -770,25 +842,38 @@
         const whisperBlob = new Blob([whisperWorkerCode], { type: 'application/javascript' });
         const whisperWorkerUrl = URL.createObjectURL(whisperBlob);
 
-        function initWasmWhisper() {
-            if (whisperWorker) return;
-            
-            appendLog("[Starting background WASM Whisper pre-fetch...]");
-            // FIX: Removed { type: 'module' } to prevent browser from silently killing the worker
-            whisperWorker = new Worker(whisperWorkerUrl);
-            
-            whisperWorker.onmessage = (e) => {
-                if (e.data.type === 'status' && e.data.message === 'Ready') {
-                    whisperReady = true;
-                    appendLog("[Local WASM Fallback Engine Ready]");
-                } else if (e.data.type === 'result') {
-                    processTranscript(e.data.text || "", "WASM STT");
-                } else if (e.data.type === 'error') {
-                    console.error("Local Whisper WASM error:", e.data.message);
-                }
-            };
-            
-            whisperWorker.postMessage({ type: 'init' });
+        async function initWasmWhisper() {
+            return new Promise((resolve) => {
+                if (whisperWorker) return resolve(whisperReady);
+                
+                appendLog("[Starting background WASM Whisper Pre-fetch...]");
+                // Added { type: 'module' } back since GitHub Pages acts as a proper server
+                whisperWorker = new Worker(whisperWorkerUrl, { type: 'module' });
+                
+                // Add top-level error catching so the UI never freezes
+                whisperWorker.onerror = (err) => {
+                    console.error("Worker initialization failed:", err.message);
+                    resolve(false);
+                };
+                
+                whisperWorker.onmessage = (e) => {
+                    if (e.data.type === 'status' && e.data.message === 'Ready') {
+                        whisperReady = true;
+                        appendLog("[Unified Whisper WASM Engine Ready]");
+                        resolve(true);
+                    } else if (e.data.type === 'result') {
+                        processTranscript(e.data.text || "", "WASM STT");
+                    } else if (e.data.type === 'wakeword_result') {
+                        evaluateWakeword(e.data.text || "");
+                        isCheckingWakeword = false;
+                    } else if (e.data.type === 'error') {
+                        console.error("Local Whisper WASM error:", e.data.message);
+                        resolve(false);
+                    }
+                };
+                
+                whisperWorker.postMessage({ type: 'init' });
+            });
         }
 
 
@@ -820,13 +905,35 @@
                 osc.stop(ctx.currentTime + 0.3);
             } catch (e) {}
         }
+        
+        function triggerCommandCapture() {
+            isRecordingCommand = true;
+            silenceFrames = 0;
+            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
+            audioBuffer = [...preRollBuffer]; 
+            
+            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
+                playWakeChime(); 
+            }
+            
+            requestAnimationFrame(() => {
+                setMicState('listening', 'RECORDING');
+                setBubbleState('listening');
+            });
+            
+            // Clear Vosk stream so it doesn't immediately false-trigger on leftover data
+            if (voskReady && voskWorker) {
+                voskWorker.postMessage({ type: 'reset' });
+            }
+        }
 
         async function startHybridMicSystem() {
             try {
                 setMicState('init', 'INITIALIZING...');
+                setBubbleState('info', 'Loading local AI models (Vosk + Whisper)...');
                 
-                // Spin up WASM background worker gracefully on boot
-                initWasmWhisper();
+                // Spin up both WASM background workers gracefully on boot
+                await Promise.all([initVoskWakeWord(), initWasmWhisper()]);
                 
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -858,7 +965,7 @@
                     const rms = Math.sqrt(sum / inputData.length);
 
                     if (isRecordingCommand) {
-                        // PHASE 2: Command Capture
+                        // PHASE 2: Command Capture (For Python/Whisper)
                         audioBuffer.push(new Float32Array(inputData));
 
                         if (rms < SILENCE_THRESHOLD) {
@@ -881,92 +988,17 @@
                         if (preRollBuffer.length > PRE_ROLL_FRAMES) {
                             preRollBuffer.shift();
                         }
+                        
+                        // Send audio chunks to local Vosk WASM worker to check for wake words
+                        if (voskReady && voskWorker) {
+                            voskWorker.postMessage({ type: 'process', audio: inputData });
+                        }
                     }
                 };
 
-                // 2. Start Local Free Web Speech API purely for Wake Word detection
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (SpeechRecognition) {
-                    localRecognizer = new SpeechRecognition();
-                    localRecognizer.continuous = true;
-                    localRecognizer.interimResults = true; // Crucial for instant reaction
-
-                    localRecognizer.onresult = (event) => {
-                        if (isAssistantSpeaking || isRecordingCommand) return;
-
-                        let transcript = "";
-                        for (let i = event.resultIndex; i < event.results.length; i++) {
-                            transcript += event.results[i][0].transcript;
-                        }
-                        
-                        // Strip punctuation for safer wakeword matching
-                        transcript = transcript.replace(/[?!,;:]/g, '').replace(/(?<!\d)\.(?!\d)/g, '').replace(/\.+$/, '');
-                        
-                        const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
-                            ? /\b(jesse|jessie|jessy)\b/i 
-                            : new RegExp(`\\b${wakeword}\\b`, 'i');
-
-                        // If wake word is heard locally OR the user is in a 8-sec follow-up conversation
-                        if (wakewordRegex.test(transcript) || awaitingCommand || trainingMode || awaitingNoteContent) {
-                            
-                            isRecordingCommand = true;
-                            silenceFrames = 0;
-                            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
-                            audioBuffer = [...preRollBuffer]; 
-                            
-                            if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
-                                playWakeChime(); 
-                            }
-                            
-                            requestAnimationFrame(() => {
-                                setMicState('listening', 'RECORDING');
-                                setBubbleState('listening');
-                            });
-                        }
-                    };
-
-                    localRecognizer.onerror = (event) => {
-                        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-                            console.warn("Local Web Speech Error:", event.error);
-                            stopHybridMicSystem();
-                            setBubbleState('info', "Microphone access denied.");
-                        }
-                    };
-
-                    localRecognizer.onend = () => {
-                        // Smoothly reboot the local engine in background to prevent browser stalls
-                        if (isMicActive) {
-                            setTimeout(() => {
-                                if (isMicActive) {
-                                    // Prevent 10-second prompt spam on strict browsers or file:/// protocol
-                                    if (navigator.permissions && navigator.permissions.query) {
-                                        navigator.permissions.query({ name: 'microphone' }).then(perm => {
-                                            if (perm.state === 'granted') {
-                                                try { localRecognizer.start(); } catch(e){}
-                                            } else {
-                                                stopHybridMicSystem();
-                                                setBubbleState('info', "Mic permission not saved globally. Click LISTEN.");
-                                            }
-                                        }).catch(() => {
-                                            try { localRecognizer.start(); } catch(e){}
-                                        });
-                                    } else {
-                                        try { localRecognizer.start(); } catch(e){}
-                                    }
-                                }
-                            }, 1000); 
-                        }
-                    };
-
-                    localRecognizer.start();
-                    setMicState('auto', 'WAKEWORD MODE');
-                    setBubbleState('wakeword');
-                    appendLog("[Hybrid Engine Active]");
-                } else {
-                    // Fallback for Firefox/Safari browsers missing Speech API
-                    setMicState('auto', 'PUSH TO TALK');
-                    setBubbleState('info', "Local wake word unsupported. Click LISTEN to command.");
-                }
+                setMicState('auto', 'WAKEWORD MODE');
+                setBubbleState('wakeword');
+                appendLog("[Hybrid Dual-WASM Engine Active]");
 
             } catch (err) {
                 console.error("Mic access denied or error:", err);
@@ -979,28 +1011,25 @@
             let totalLength = audioBuffer.reduce((acc, val) => acc + val.length, 0);
             let flattenedFloat32 = new Float32Array(totalLength);
             let offset = 0;
-            for (let arr of audioBuffer) {
+            for (let arr of bufferArray) {
                 flattenedFloat32.set(arr, offset);
                 offset += arr.length;
             }
-            audioBuffer = [];
-
-            // Convert Float32Array to Int16Array for Python Server Backend
-            const int16Buffer = new Int16Array(flattenedFloat32.length);
-            for (let i = 0; i < flattenedFloat32.length; i++) {
-                let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
-                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            }
-
+            
+            // Try Python server first for ultra-low latency wakeword matching
             try {
-                // PRIMARY ROUTE: Try local python server first! (Instant speed)
-                const response = await fetch('http://127.0.0.1:5000/transcribe', {
+                const int16Buffer = new Int16Array(flattenedFloat32.length);
+                for (let i = 0; i < flattenedFloat32.length; i++) {
+                    let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
+                    int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                
+                // Changed 127.0.0.1 to localhost to bypass GitHub Pages HTTPS Mixed Content blocks
+                const response = await fetch('http://localhost:5000/transcribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/octet-stream' },
                     body: int16Buffer
                 });
-                
-                if (!response.ok) throw new Error("Backend response error");
                 const data = await response.json();
                 
                 if (data.status === 'success' && data.text) {
@@ -1056,10 +1085,6 @@
             isMicActive = false;
             isRecordingCommand = false;
             
-            if (localRecognizer) {
-                localRecognizer.onend = null;
-                localRecognizer.stop();
-            }
             if (processor) {
                 processor.disconnect();
                 processor = null;
@@ -1083,12 +1108,7 @@
                 startHybridMicSystem();
             } else if (!isRecordingCommand) {
                 // Allows user to manually bypass the wake word (Push to Talk)
-                isRecordingCommand = true;
-                silenceFrames = 0;
-                audioBuffer = [...preRollBuffer];
-                playWakeChime();
-                setMicState('listening', 'RECORDING');
-                setBubbleState('listening');
+                triggerCommandCapture();
             } else {
                 stopHybridMicSystem();
             }
@@ -1665,23 +1685,23 @@
                 if (newsData && newsData.items && newsData.items.length >= 2) {
                     const headline1 = newsData.items[0].title;
                     const headline2 = newsData.items[1].title;
-                    newsStr = `Here are the top trending global stories: First, ${headline1}. Second, ${headline2}.`;
-                }
-
-                const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${newsStr} Have a wonderful day!`;
-                speak(fullSpeech);
-
-            } catch (e) {
-                console.warn("Morning sequence news error:", e);
-                const errorSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} I had trouble connecting to the news network, but I hope you have a great day!`;
-                speak(errorSpeech);
+            // Convert Float32Array to Int16Array for Python Server Backend
+            const int16Buffer = new Int16Array(flattenedFloat32.length);
+            for (let i = 0; i < flattenedFloat32.length; i++) {
+                let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
+                int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-        }
 
-        async function fetchJoke() {
             try {
-                setBubbleState('processing');
-                const response = await fetch('https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit');
+                // PRIMARY ROUTE: Try local python server first! (Instant speed)
+                // Changed 127.0.0.1 to localhost to bypass GitHub Pages HTTPS Mixed Content blocks
+                const response = await fetch('http://localhost:5000/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream' },
+                    body: int16Buffer
+                });
+                
+                if (!response.ok) throw new Error("Backend response error");
                 const data = await response.json();
                 
                 if (data.type === 'twopart') {
