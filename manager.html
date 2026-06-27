@@ -269,14 +269,19 @@
 
         function connectToAssistant(assistantId) {
             if (!peer) return;
+            
+            // Clean the scanned ID of any hidden spaces or newlines that cause connection aborts
+            const cleanId = assistantId.trim();
+            
             updateStatus('Connecting...', 'bg-yellow-500');
             
-            assistantConn = peer.connect(assistantId, { reliable: true });
+            // Standard connection (removed strict reliable constraint for better mobile compatibility)
+            assistantConn = peer.connect(cleanId);
 
             assistantConn.on('open', () => {
                 updateStatus('Connected', 'bg-green-500');
-                localStorage.setItem('manager_assistant_id', assistantId);
-                savedAssistantId = assistantId;
+                localStorage.setItem('manager_assistant_id', cleanId);
+                savedAssistantId = cleanId;
                 
                 // Immediately sync our truth to the assistant
                 pushSyncData();
