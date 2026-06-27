@@ -106,7 +106,7 @@
                     </div>
                 </div>
 
-                <!-- Sleek Speech Bubble line -->
+                <!-- Sleek Speech Bubble line (Dynamic UI Container) -->
                 <div id="speech-bubble" class="text-xs text-white/95 font-light leading-relaxed bg-black/40 backdrop-blur-md px-3.5 py-2 rounded-lg border border-white/5 self-start shadow-md min-h-[34px] max-w-full inline-flex items-center break-words">
                     <!-- Dynamic suggestions / visual spinners loaded here -->
                 </div>
@@ -658,6 +658,9 @@
                 synth.cancel(); 
             }
             
+            // BLOCKS internal listen recognizer instantly before speech engines initialization
+            isAssistantSpeaking = true; 
+            
             const utterance = new SpeechSynthesisUtterance(text);
             const selectedVoice = voices.find(v => v.name === selectedVoiceName);
             if (selectedVoice) {
@@ -669,16 +672,21 @@
                 setBubbleState('info', text); 
             };
             utterance.onend = () => { 
-                isAssistantSpeaking = false; 
-                if (!awaitingCommand && !isRecordingCommand) {
-                    setBubbleState(isMicActive ? 'wakeword' : 'idle');
-                }
+                // Acoustic echo guard to let room decay quiet down
+                setTimeout(() => {
+                    isAssistantSpeaking = false; 
+                    if (!awaitingCommand && !isRecordingCommand) {
+                        setBubbleState(isMicActive ? 'wakeword' : 'idle');
+                    }
+                }, 800);
             };
             utterance.onerror = () => { 
-                isAssistantSpeaking = false; 
-                if (!awaitingCommand && !isRecordingCommand) {
-                    setBubbleState(isMicActive ? 'wakeword' : 'idle');
-                }
+                setTimeout(() => {
+                    isAssistantSpeaking = false; 
+                    if (!awaitingCommand && !isRecordingCommand) {
+                        setBubbleState(isMicActive ? 'wakeword' : 'idle');
+                    }
+                }, 800);
             };
 
             setBubbleState('info', text);
@@ -762,8 +770,16 @@
         function saveTransferDatasetToLocalStorage() {
             try {
                 const serialized = transferRecognizer.serializeDataset();
-                // Transfer binary dataset to base64 string for safe local storage
-                const base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(serialized)));
+                const uint8 = new Uint8Array(serialized);
+                
+                // Stack-safe serialization chunk-by-chunk to bypass call stack limits
+                let binary = '';
+                const chunk = 8192;
+                for (let i = 0; i < uint8.length; i += chunk) {
+                    const subarr = uint8.subarray(i, i + chunk);
+                    binary += String.fromCharCode.apply(null, subarr);
+                }
+                const base64 = btoa(binary);
                 localStorage.setItem(`tf_wakeword_model_${wakeword}`, base64);
                 appendLog("[Speech neural network saved to browser local storage]");
             } catch (err) {
@@ -1108,7 +1124,7 @@
 
         function parseDurationToSeconds(text) {
             const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
+            const hourPattern = /(\d+)\s*(?:hour|hr|h|ours)/i;
             const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
             const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
 
@@ -1260,7 +1276,7 @@
                 const options = { weekday: 'long', month: 'long', day: 'numeric' };
                 const dateStr = now.toLocaleDateString('en-US', options);
                 const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                speak(`It is currently {timeStr} on {dateStr}.`);
+                speak(`It is currently ${timeStr} on ${dateStr}.`);
                 return;
             }
 
@@ -1464,16 +1480,16 @@
                 try {
                     const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
                     
-                    let res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}&tag=video`);
+                    let res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery) + "&tag=video");
                     let data = await res.json();
                     
                     if (!data || data.length === 0) {
-                        res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery + " tv")}`);
+                        res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery + " tv"));
                         data = await res.json();
                     }
 
                     if (!data || data.length === 0) {
-                        res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}`);
+                        res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery));
                         data = await res.json();
                     }
 
@@ -1497,11 +1513,11 @@
                 let cleanQuery = query.replace(/\b(music|radio|station|channel|news)\b/gi, '').trim();
                 
                 const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
-                let res = await fetch(`${apiUrl}&name=${encodeURIComponent(cleanQuery)}`);
+                let res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery));
                 let data = await res.json();
                 
                 if (!data || data.length === 0) {
-                    let tagRes = await fetch(`${apiUrl}&tagList=${encodeURIComponent(cleanQuery)}`);
+                    let tagRes = await fetch(apiUrl + "&tagList=" + encodeURIComponent(cleanQuery));
                     data = await tagRes.json();
                 }
 
@@ -1816,6 +1832,7 @@
             lucide.createIcons();
         }
 
+        // Bypasses hardware stream deletion to completely eliminate recurring prompts!
         function closeDrawer() {
             controlDrawer.classList.add('translate-x-full');
             drawerIcon.setAttribute('data-lucide', 'menu');
