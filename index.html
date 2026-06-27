@@ -76,7 +76,7 @@
                 <div id="date-display" class="text-xs md:text-sm font-normal text-gray-300/75 mt-1 tracking-wide uppercase">Thursday, June 25, 2026</div>
             </div>
 
-            <!-- Elegant Weather Widget (Slightly Smaller) -->
+            <!-- Elegant Weather Widget -->
             <div class="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl p-3.5 flex flex-col items-end text-right shadow-xl transition-all duration-1000 hover:border-cyan-500/30 hide-on-sleep">
                 <div class="flex items-center gap-2">
                     <span class="text-cyan-400 font-semibold text-sm tracking-wide" id="weather-city">Locating...</span>
@@ -332,7 +332,7 @@
         // Initialize Lucide Icons
         lucide.createIcons();
 
-        // System Constants & Elements
+        // System Elements
         const clockDisplay = document.getElementById('clock-display');
         const dateDisplay = document.getElementById('date-display');
         const speechBubble = document.getElementById('speech-bubble');
@@ -377,6 +377,7 @@
         let currentRadioName = "Classic FM stream";
         let isSleepMode = false;
         let isAssistantSpeaking = false; 
+        let speechSafetyTimeout = null; // Watchdog watchdog for TTS stuck state
 
         // Contextual Suggestions Rotation logic
         const suggestions = [
@@ -478,7 +479,6 @@
                 conn.on('open', () => {
                     hideQRCode();
                     speak("A remote manager phone has been connected.");
-                    // Push current state to the phone immediately
                     syncToPeers();
                 });
 
@@ -495,9 +495,7 @@
                 console.error("PeerJS Error:", err);
                 appendLog("[PeerJS Error: " + err.type + "]");
                 
-                // Add robust handling for when Peer server disconnects or fails
                 if (err.type === 'network' || err.type === 'server-error' || err.type === 'unavailable-id') {
-                     // Try reconnecting in 5s
                      setTimeout(() => {
                          if(peer && !peer.destroyed) peer.reconnect();
                      }, 5000);
@@ -515,7 +513,6 @@
 
         function handlePeerData(payload, conn) {
             if (payload.type === 'sync') {
-                // Phone sent us updated calendar or settings
                 if (payload.calendar) {
                     customCalendar = payload.calendar;
                     localStorage.setItem('echo_private_calendar', JSON.stringify(customCalendar));
@@ -576,10 +573,11 @@
 
         initPeerJS();
 
-
         // ==============================================================================
         // DYNAMIC UI UPDATERS (SPEECH BUBBLE & SUGGESTIONS)
         // ==============================================================================
+        let currentBubbleState = 'idle';
+
         function startSuggestionRotation() {
             if (suggestionInterval) clearInterval(suggestionInterval);
             suggestionInterval = setInterval(updateSuggestion, 8000);
@@ -597,11 +595,9 @@
             
             const suggestionSpan = document.getElementById('suggestion-text');
             if (suggestionSpan) {
-                // Smooth fade out
                 suggestionSpan.classList.remove('opacity-80');
                 suggestionSpan.classList.add('opacity-0');
                 
-                // Wait for fade, then change text and fade in
                 setTimeout(() => {
                     if (currentBubbleState !== 'idle' && currentBubbleState !== 'wakeword') return;
                     suggestionSpan.textContent = text;
@@ -619,7 +615,7 @@
             if (state === 'wakeword' || state === 'idle') {
                 if (!document.getElementById('suggestion-text')) {
                     speechBubble.innerHTML = `<span id="suggestion-text" class="opacity-0 transition-opacity duration-500"></span>`;
-                    updateSuggestion(); // triggers initial text set and fade in
+                    updateSuggestion(); 
                 }
                 startSuggestionRotation();
             } else {
@@ -699,13 +695,11 @@
         }
 
         function getLocationAndWeather() {
-            // First check if a saved location exists
             if (savedCity) {
                 fetchWeatherByCity(savedCity);
                 return;
             }
 
-            // Otherwise attempt GeoLocation logic safely
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
@@ -860,6 +854,19 @@
             }
             
             isAssistantSpeaking = true; 
+
+            // Clear any active safety watchdog timers
+            if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
+            
+            // Safety release valve: Speech Synthesis can silently freeze on browsers,
+            // permanently locking up the microphone. This forces a release after 12 seconds max.
+            speechSafetyTimeout = setTimeout(() => {
+                if (isAssistantSpeaking) {
+                    isAssistantSpeaking = false;
+                    appendLog("[Safety Watchdog] TTS released voice channel lock.");
+                    if (isMicActive && !isCommandCapture) setBubbleState('wakeword');
+                }
+            }, 12000);
             
             const utterance = new SpeechSynthesisUtterance(text);
             const selectedVoice = voices.find(v => v.name === selectedVoiceName);
@@ -872,6 +879,7 @@
                 setBubbleState('info', text); 
             };
             utterance.onend = () => { 
+                if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
                 setTimeout(() => {
                     isAssistantSpeaking = false; 
                     if (!awaitingCommand && !isCommandCapture) {
@@ -880,6 +888,7 @@
                 }, 1500); 
             };
             utterance.onerror = () => { 
+                if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
                 setTimeout(() => {
                     isAssistantSpeaking = false; 
                     if (!awaitingCommand && !isCommandCapture) {
@@ -939,7 +948,7 @@
                     if (chimeAudio) {
                         chimeAudio.currentTime = 0;
                         chimeAudio.onended = resolve;
-                        chimeAudio.onerror = resolve; // Continue even if audio fails
+                        chimeAudio.onerror = resolve; 
                         chimeAudio.play().catch(e => {
                             console.warn("Chime blocked by browser:", e);
                             resolve();
@@ -973,6 +982,7 @@
             let isChiming = false;
 
             recognition.onresult = async (event) => {
+                // Instantly block speech captures while the assistant speaks, plays chime, or is processing
                 if (isAssistantSpeaking || !isMicActive || isChiming) return;
 
                 let interimTranscript = '';
@@ -990,7 +1000,7 @@
                 if (!currentText) return;
 
                 if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
-                    // WAKE WORD MODE
+                    // WAKE WORD MODE: Highly sensitive matching regex
                     const wakewordRegex = new RegExp(`\\b(${wakeword}|hey ${wakeword}|hi ${wakeword})`, 'i');
                     const match = currentText.match(wakewordRegex);
 
@@ -999,12 +1009,12 @@
                         const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
                         
                         if (finalTranscript && textAfterWakeword.length > 2) {
-                            // User spoke everything in one breath
+                            // User spoke everything in one breath (e.g., "Jesse what time is it")
                             await playWakeChime();
                             isChiming = false;
                             processTranscript(finalTranscript, "Native Speech");
                         } else {
-                            // User just said "Jesse", wait for command
+                            // User just said "Jesse", abort mic loop to flush the noise buffer
                             try { recognition.abort(); } catch(e){}
                             
                             await playWakeChime();
@@ -1012,7 +1022,12 @@
                             isChiming = false;
                             triggerCommandCapture();
                             
-                            try { recognition.start(); } catch(e){}
+                            // Restart fresh capture session
+                            setTimeout(() => {
+                                if (isMicActive) {
+                                    try { recognition.start(); } catch(e){}
+                                }
+                            }, 100);
                         }
                     }
                 } else {
@@ -1028,12 +1043,29 @@
             };
 
             recognition.onerror = (event) => {
-                // Ignore silent restarts or network drops
+                console.warn("Speech recognition error:", event.error);
+                appendLog(`[Speech Recognition Error] ${event.error}`);
+
+                // If error is related to silence/microphone pause, do not crash.
+                // Reset states and prepare to restart engine gracefully.
+                if (event.error === 'no-speech' || event.error === 'aborted') {
+                    // Silent retry logic handled elegantly by onend
+                } else if (event.error === 'not-allowed') {
+                    appendLog("[Critical] Permission Denied for microphone access.");
+                    stopMicSystem();
+                    setBubbleState('info', "Microphone blocked. Check browser address bar permissions!");
+                }
             };
 
             recognition.onend = () => {
+                // If microphone is active and not playing chime, restart Web Speech API safely.
+                // Wrapped in small timeout to prevent browser start collisions.
                 if (isMicActive && !isChiming) {
-                    try { recognition.start(); } catch(e){}
+                    setTimeout(() => {
+                        if (isMicActive) {
+                            try { recognition.start(); } catch(e){}
+                        }
+                    }, 200);
                 }
             };
 
@@ -1051,6 +1083,14 @@
 
         function startMicSystem() {
             setMicState('init', 'INITIALIZING...');
+
+            // SECURE CONTEXT GUARD: Inform user if running in an insecure non-HTTPS or non-localhost context.
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                appendLog("[Insecure Context Warn] Web Speech API strictly requires HTTPS on mobile devices.");
+                setBubbleState('info', "Insecure Context! Please host over HTTPS to enable Web Speech API on phone.");
+                setMicState('idle', 'INSECURE');
+                return;
+            }
             
             navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
                 isMicActive = true;
@@ -1063,7 +1103,7 @@
             }).catch(err => {
                 console.error("Mic access denied or error:", err);
                 setMicState('idle', 'MIC ERROR');
-                setBubbleState('info', "Microphone error or denied.");
+                setBubbleState('info', "Microphone error or access denied.");
             });
         }
 
@@ -1115,7 +1155,11 @@
                 try { recognition.abort(); } catch(e){}
                 await playWakeChime();
                 triggerCommandCapture();
-                try { recognition.start(); } catch(e){}
+                setTimeout(() => {
+                    if (isMicActive) {
+                        try { recognition.start(); } catch(e){}
+                    }
+                }, 100);
             } else {
                 stopMicSystem();
             }
@@ -1151,7 +1195,7 @@
 
         function parseDurationToSeconds(text) {
             const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|ours)/i;
+            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
             const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
             const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
 
@@ -1533,7 +1577,7 @@
         });
 
         async function playInternetTV(query) {
-            speak(`Searching public directories for ${query}...`);
+            speak("Searching public broadcast registries...");
             let cleanQuery = query.replace(/\b(tv|channel|network|watch)\b/gi, '').trim().toLowerCase();
             
             const safeChannels = {
@@ -1561,11 +1605,6 @@
                     
                     if (!data || data.length === 0) {
                         res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery + " tv"));
-                        data = await res.json();
-                    }
-
-                    if (!data || data.length === 0) {
-                        res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery));
                         data = await res.json();
                     }
 
@@ -1722,7 +1761,7 @@
             const now = new Date();
             const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
             
-            let weatherStr = "I'm still loading the weather data.";
+            let weatherStr = "I'm still loading weather reports.";
             if (currentWeatherState.temp !== null) {
                 weatherStr = `In ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees and ${currentWeatherState.condition}. `;
                 if (currentWeatherState.high !== null) {
@@ -1751,7 +1790,7 @@
                 if (newsData && newsData.items && newsData.items.length >= 2) {
                     const headline1 = newsData.items[0].title;
                     const headline2 = newsData.items[1].title;
-                    newsStr = `Here are the top trending global stories: First, ${headline1}. Second, ${headline2}.`;
+                    newsStr = `Here are today's stories. First, ${headline1}. Second, ${headline2}.`;
                 }
 
                 const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${calendarStr} ${newsStr} Have a wonderful day!`;
