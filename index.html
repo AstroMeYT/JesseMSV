@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jesse</title>
+    <title>Neo</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter (Premium Sans-Serif) -->
@@ -14,9 +14,6 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- HLS.js for Live Video Stream Support -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <!-- TensorFlow.js and Speech Commands for Custom Offline Wake Word detection -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -106,7 +103,7 @@
                     </div>
                 </div>
 
-                <!-- Sleek Speech Bubble line (Dynamic UI Container) -->
+                <!-- Sleek Speech Bubble line -->
                 <div id="speech-bubble" class="text-xs text-white/95 font-light leading-relaxed bg-black/40 backdrop-blur-md px-3.5 py-2 rounded-lg border border-white/5 self-start shadow-md min-h-[34px] max-w-full inline-flex items-center break-words">
                     <!-- Dynamic suggestions / visual spinners loaded here -->
                 </div>
@@ -118,7 +115,7 @@
                 
                 <!-- Silent variables so we do not break JavaScript selectors -->
                 <span id="assistant-title" class="hidden"></span>
-                <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Jesse</b></span>
+                <span id="wakeword-indicator" class="hidden">Wakeword: <b id="wakeword-val">Neo</b></span>
             </div>
 
             <!-- Floating Audio & Drawer Controllers (Bottom-Right) -->
@@ -201,11 +198,11 @@
                     <div class="text-[10px] text-gray-500 leading-relaxed">
                         <p class="font-semibold text-gray-400 mb-0.5">Spoken Commands:</p>
                         <ul class="list-disc list-inside space-y-0.5">
-                            <li>"Jesse, calculate 1 plus 3 plus two"</li>
-                            <li>"Jesse, write a note to buy flowers"</li>
-                            <li>"Jesse, set timer for 1 minute 30 seconds"</li>
-                            <li>"Jesse, play 104.3 The Party"</li>
-                            <li>"Jesse, watch NASA TV"</li>
+                            <li>"Neo, calculate 1 plus 3 plus two"</li>
+                            <li>"Neo, write a note to buy flowers"</li>
+                            <li>"Neo, set timer for 1 minute 30 seconds"</li>
+                            <li>"Neo, play 104.3 The Party"</li>
+                            <li>"Neo, watch NASA TV"</li>
                         </ul>
                     </div>
                 </div>
@@ -261,10 +258,10 @@
                         </div>
                     </div>
 
-                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
+                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2 opacity-50 pointer-events-none">
                         <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Wake Word Setup</div>
-                        <button id="train-wakeword-btn" class="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">⚡ Calibrate Wake Word</button>
-                        <p class="text-[9px] text-gray-400 leading-normal">Default is <b>Jesse</b>. Click Calibrate to record your custom voice trigger locally.</p>
+                        <button class="w-full bg-cyan-500/20 text-gray-400 font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">Managed by Server</button>
+                        <p class="text-[9px] text-gray-400 leading-normal">Your Wake Word is strictly managed by your Python server's OpenWakeWord engine to preserve browser stability and privacy.</p>
                     </div>
 
                     <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
@@ -280,7 +277,7 @@
         </div>
 
         <div class="text-center text-[9px] text-gray-500">
-            Smart Display Suite • Offline TF.js Wake Edition
+            Smart Display Suite • WebSockets VAD Edition
         </div>
     </div>
 
@@ -291,6 +288,17 @@
     <script>
         // Initialize Lucide Icons
         lucide.createIcons();
+        
+        // ==============================================================================
+        // SECURE INTERNET / NETWORK ROUTING SETUP
+        // ==============================================================================
+        // If you are using Ngrok, Cloudflare Tunnels, or hosting your server on the internet,
+        // simply replace "127.0.0.1:5000" below with your public URL (e.g. "my-app.ngrok.app")
+        const BACKEND_DOMAIN = "127.0.0.1:5000"; 
+        
+        const IS_SECURE = window.location.protocol === 'https:' || BACKEND_DOMAIN.includes('ngrok') || BACKEND_DOMAIN.includes('trycloudflare');
+        const HTTP_URL = `${IS_SECURE ? 'https' : 'http'}://${BACKEND_DOMAIN}`;
+        const WS_URL = `${IS_SECURE ? 'wss' : 'ws'}://${BACKEND_DOMAIN}/wakeword`;
 
         // System Constants & Elements
         const clockDisplay = document.getElementById('clock-display');
@@ -309,13 +317,11 @@
         const sendCommandBtn = document.getElementById('send-command-btn');
         const voiceSelect = document.getElementById('voice-select');
         const applyVoiceBtn = document.getElementById('apply-voice-btn');
-        const trainWakewordBtn = document.getElementById('train-wakeword-btn');
-        const wakewordVal = document.getElementById('wakeword-val');
         const userNameInput = document.getElementById('user-name-input');
         const saveNameBtn = document.getElementById('save-name-btn');
 
         // State variables
-        let wakeword = "jesse";
+        let wakeword = "neo";
         let trainingMode = false;
         let selectedVoiceName = "";
         let userName = localStorage.getItem('echo_user_name') || "Friend";
@@ -335,14 +341,14 @@
 
         // Contextual Suggestions Rotation logic
         const suggestions = [
-            'Ask me anything! Say "Jesse, play country music"',
-            'Say "Jesse, what\'s the weather today?"',
-            'Try "Jesse, set a timer for 10 minutes"',
-            'Say "Jesse, tell me a joke"',
-            'Try "Jesse, watch NASA TV"',
-            'Say "Jesse, write a note to call mom"',
-            'Ask "Jesse, who is Albert Einstein?"',
-            'Say "Jesse, flip a coin"'
+            'Ask me anything! Say "Neo, play country music"',
+            'Say "Neo, what\'s the weather today?"',
+            'Try "Neo, set a timer for 10 minutes"',
+            'Say "Neo, tell me a joke"',
+            'Try "Neo, watch NASA TV"',
+            'Say "Neo, write a note to call mom"',
+            'Ask "Neo, who is Albert Einstein?"',
+            'Say "Neo, flip a coin"'
         ];
         let suggestionIndex = 0;
         let suggestionInterval = null;
@@ -395,7 +401,7 @@
             if (currentBubbleState !== 'idle' && currentBubbleState !== 'wakeword') return;
 
             let capitalizedWakeWord = wakeword.charAt(0).toUpperCase() + wakeword.slice(1);
-            let text = suggestions[suggestionIndex].replace(/Jesse/gi, capitalizedWakeWord);
+            let text = suggestions[suggestionIndex].replace(/Jesse|Alexa|Neo/gi, capitalizedWakeWord);
             
             const suggestionSpan = document.getElementById('suggestion-text');
             if (suggestionSpan) {
@@ -678,7 +684,7 @@
                     if (!awaitingCommand && !isRecordingCommand) {
                         setBubbleState(isMicActive ? 'wakeword' : 'idle');
                     }
-                }, 1500); // Extended to 1500ms for full room reverberation decay
+                }, 1500); 
             };
             utterance.onerror = () => { 
                 setTimeout(() => {
@@ -710,25 +716,21 @@
         });
 
         // ==============================================================================
-        // TENSORFLOW.JS LOCAL OFFLINE WAKEWORD ENGINE + PYTHON BACKEND CO-ROUTINE
+        // WEBSOCKET VAD STREAMER -> PYTHON OPENWAKEWORD / WHISPER
         // ==============================================================================
         
         let isMicActive = false;
-        let isRecordingCommand = false; 
+        let isSpeaking = false;
+        let isCommandCapture = false; 
         
-        // TF.js Audio State
-        let baseRecognizer = null;
-        let transferRecognizer = null;
-        let isTfModelReady = false;
-        let isTrainingWord = false;
-        
-        // WebAudio API (Transcribe Payload)
         let audioContext = null;
         let processor = null;
+        let mediaStream = null;
+        let wakeSocket = null;
+        
         let audioBuffer = [];
         let preRollBuffer = [];
         let silenceFrames = 0;
-        let mediaStream = null;
 
         const SILENCE_THRESHOLD = 0.02; 
         const SILENCE_FRAMES_MAX = 6;  // Roughly 1.5s of silence triggers transmission
@@ -736,6 +738,39 @@
 
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
+
+        // Initialize persistent WebSocket connection to Python Backend
+        function initWakeSocket() {
+            if (wakeSocket && (wakeSocket.readyState === WebSocket.OPEN || wakeSocket.readyState === WebSocket.CONNECTING)) return;
+            
+            wakeSocket = new WebSocket(WS_URL);
+            wakeSocket.binaryType = 'arraybuffer';
+            
+            wakeSocket.onopen = () => {
+                appendLog("[Cloud WebSocket Secured]");
+            };
+            
+            wakeSocket.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.detected && !isCommandCapture && !isAssistantSpeaking) {
+                        // SERVER CONFIRMED WAKE WORD! Switch to command capture instantly.
+                        playWakeChime();
+                        isCommandCapture = true;
+                        audioBuffer = [...preRollBuffer]; 
+                        
+                        setMicState('listening', 'RECORDING');
+                        setBubbleState('listening');
+                    }
+                } catch(err){}
+            };
+            
+            wakeSocket.onclose = () => {
+                // Reconnect if the server drops or resets
+                setTimeout(initWakeSocket, 4000);
+            };
+        }
+        initWakeSocket(); // Start background connection instantly
 
         function setMicState(state, text = null) {
             micTriggerBtn.classList.remove('bg-red-600', 'bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-yellow-500');
@@ -766,114 +801,9 @@
             } catch (e) {}
         }
 
-        // --- TF.JS MODEL STORAGE PROTOCOLS ---
-        function saveTransferDatasetToLocalStorage() {
-            try {
-                const serialized = transferRecognizer.serializeDataset();
-                const uint8 = new Uint8Array(serialized);
-                
-                // Stack-safe serialization chunk-by-chunk to bypass call stack limits
-                let binary = '';
-                const chunk = 8192;
-                for (let i = 0; i < uint8.length; i += chunk) {
-                    const subarr = uint8.subarray(i, i + chunk);
-                    binary += String.fromCharCode.apply(null, subarr);
-                }
-                const base64 = btoa(binary);
-                localStorage.setItem(`tf_wakeword_model_${wakeword}`, base64);
-                appendLog("[Speech neural network saved to browser local storage]");
-            } catch (err) {
-                console.error("Model save failure:", err);
-            }
-        }
-
-        function loadTransferDatasetFromLocalStorage() {
-            try {
-                const base64 = localStorage.getItem(`tf_wakeword_model_${wakeword}`);
-                if (!base64) return false;
-                
-                const binaryStr = atob(base64);
-                const bytes = new Uint8Array(binaryStr.length);
-                for (let i = 0; i < binaryStr.length; i++) {
-                    bytes[i] = binaryStr.charCodeAt(i);
-                }
-                
-                transferRecognizer.deserializeDataset(bytes.buffer);
-                return true;
-            } catch (err) {
-                console.error("Model restore failure:", err);
-                return false;
-            }
-        }
-
-        // --- MIC CALIBRATION WORKFLOW ---
-        async function runInteractiveCalibration() {
-            setMicState('init', 'CALIBRATING...');
-            isTrainingWord = true;
-            
-            speak("Welcome! Let's calibrate your wake word triggers. Please remain completely silent for 2 seconds while I measure background noise.");
-            setBubbleState('info', "Calibrating background noise...");
-            await new Promise(r => setTimeout(r, 2500));
-            
-            // 1. Record Background Noise
-            setBubbleState('info', "Recording noise...");
-            for (let i = 0; i < 4; i++) {
-                await transferRecognizer.collectExample('_background_noise_');
-                await new Promise(r => setTimeout(r, 600));
-            }
-            
-            // 2. Record Wake Word Samples
-            speak(`Great. Now say "${wakeword}" after each chime.`);
-            for (let i = 1; i <= 3; i++) {
-                setBubbleState('info', `Say "${wakeword}" (Sample ${i}/3)...`);
-                await new Promise(r => setTimeout(r, 800));
-                playWakeChime();
-                await new Promise(r => setTimeout(r, 200));
-                await transferRecognizer.collectExample(wakeword);
-            }
-            
-            // 3. Train the Transfer Model
-            setBubbleState('info', "Training brain...");
-            speak("Processing voice biometrics...");
-            
-            await transferRecognizer.train({
-                epochs: 25,
-                callback: {
-                    onEpochEnd: (epoch, logs) => console.log(`Epoch ${epoch}: loss=${logs.loss}`)
-                }
-            });
-            
-            saveTransferDatasetToLocalStorage();
-            isTrainingWord = false;
-            
-            speak(`Calibration complete! You can now call me ${wakeword}.`);
-            setBubbleState('wakeword');
-            setMicState('auto', 'WAKEWORD MODE');
-        }
-
-        async function initSpeechModel() {
-            if (isTfModelReady) return true;
-            
-            setMicState('init', 'TF.JS BOOT...');
-            setBubbleState('info', 'Loading local neural net processor...');
-            
-            try {
-                baseRecognizer = speechCommands.create('BROWSER_FFT');
-                await baseRecognizer.ensureModelLoaded();
-                
-                transferRecognizer = baseRecognizer.createTransfer('jesse-wakeword');
-                isTfModelReady = true;
-                return true;
-            } catch (err) {
-                console.error("TF.js initialization failure:", err);
-                setBubbleState('info', "TensorFlow.js init failed. Check internet/CORS.");
-                setMicState('idle', 'TF ERROR');
-                return false;
-            }
-        }
-
         function triggerCommandCapture() {
-            isRecordingCommand = true;
+            isCommandCapture = true;
+            isSpeaking = true;
             silenceFrames = 0;
             audioBuffer = [...preRollBuffer]; 
             
@@ -889,12 +819,9 @@
 
         async function startHybridMicSystem() {
             try {
-                // Ensure model is loaded first
-                const modelBooted = await initSpeechModel();
-                if (!modelBooted) return;
-
+                setMicState('init', 'INITIALIZING...');
+                
                 // WARM MIC STREAM ONLY IF WE DON'T ALREADY HAVE ONE
-                // Bypasses browser prompt loop by keeping stream warm and active in the background!
                 if (!mediaStream) {
                     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 }
@@ -917,15 +844,15 @@
                 }
 
                 isMicActive = true;
-                isRecordingCommand = false;
+                isSpeaking = false;
+                isCommandCapture = false;
                 audioBuffer = [];
                 preRollBuffer = [];
                 silenceFrames = 0;
 
-                // Continuously feed audio into the Pre-Roll Buffer
+                // Continuously monitor mic volume levels
                 processor.onaudioprocess = (e) => {
-                    // Bypass processing entirely when mic is muted or is speaking to avoid voice echo loop
-                    if (!isMicActive || isAssistantSpeaking || isTrainingWord) return;
+                    if (!isMicActive || isAssistantSpeaking) return;
 
                     const inputData = e.inputBuffer.getChannelData(0);
                     let sum = 0;
@@ -934,14 +861,38 @@
                     }
                     const rms = Math.sqrt(sum / inputData.length);
 
-                    if (isRecordingCommand) {
-                        // PHASE 2: Command capture mode
-                        audioBuffer.push(new Float32Array(inputData));
-
-                        if (rms < SILENCE_THRESHOLD) {
+                    // VOICE ACTIVITY DETECTOR (VAD)
+                    if (rms > SILENCE_THRESHOLD) {
+                        silenceFrames = 0;
+                        if (!isSpeaking) {
+                            isSpeaking = true;
+                            // Someone started talking!
+                            if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
+                                setBubbleState('info', 'Listening for wake word...');
+                            } else if (awaitingCommand || awaitingNoteContent) {
+                                // Instantly trigger if we are in a follow up conversation
+                                triggerCommandCapture();
+                            }
+                        }
+                    } else {
+                        if (isSpeaking) {
                             silenceFrames++;
+                        } else {
+                            // Phase 1: Silence. Accumulate history to prevent cut off words
+                            preRollBuffer.push(new Float32Array(inputData));
+                            if (preRollBuffer.length > PRE_ROLL_FRAMES) preRollBuffer.shift();
+                        }
+                    }
+
+                    if (isSpeaking) {
+                        if (isCommandCapture) {
+                            // Phase 3: Accumulating FULL command to send to Whisper STT
+                            audioBuffer.push(new Float32Array(inputData));
+
                             if (silenceFrames >= SILENCE_FRAMES_MAX) {
-                                isRecordingCommand = false;
+                                isSpeaking = false;
+                                isCommandCapture = false;
+                                silenceFrames = 0;
                                 requestAnimationFrame(() => {
                                     setMicState('processing', 'PROCESSING'); 
                                     setBubbleState('processing');
@@ -949,45 +900,34 @@
                                 sendToBackendPythonServer();
                             }
                         } else {
-                            silenceFrames = 0; 
-                        }
-                    } else {
-                        // PHASE 1: Silence Tracking and pre-roll maintaining
-                        preRollBuffer.push(new Float32Array(inputData));
-                        if (preRollBuffer.length > PRE_ROLL_FRAMES) {
-                            preRollBuffer.shift();
+                            // Phase 2: Send binary chunk instantly over WebSocket for Wakeword Check
+                            if (wakeSocket && wakeSocket.readyState === WebSocket.OPEN) {
+                                const int16Buffer = new Int16Array(inputData.length);
+                                for (let i = 0; i < inputData.length; i++) {
+                                    let s = Math.max(-1, Math.min(1, inputData[i]));
+                                    int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                                }
+                                wakeSocket.send(int16Buffer.buffer);
+                            }
+                            
+                            if (silenceFrames >= SILENCE_FRAMES_MAX) {
+                                // False alarm (eg. coughed or dropped a pen).
+                                isSpeaking = false;
+                                silenceFrames = 0;
+                                setBubbleState('wakeword');
+                                
+                                // Reset the remote Python Server memory immediately
+                                if (wakeSocket && wakeSocket.readyState === WebSocket.OPEN) {
+                                    wakeSocket.send("RESET");
+                                }
+                            }
                         }
                     }
                 };
 
-                // Check if we have a calibrated model in cache
-                const modelRestored = loadTransferDatasetFromLocalStorage();
-                if (modelRestored) {
-                    // Start 100% local, lightweight listening loops
-                    if (!transferRecognizer.isListening()) {
-                        await transferRecognizer.listen(result => {
-                            if (isRecordingCommand || isAssistantSpeaking || isTrainingWord || !isMicActive) return;
-                            
-                            const scores = Array.from(result.scores);
-                            const wordIndex = scores.indexOf(Math.max(...scores));
-                            const detectedWord = transferRecognizer.wordLabels()[wordIndex];
-                            
-                            if (detectedWord === wakeword && result.scores[wordIndex] > 0.85) {
-                                triggerCommandCapture();
-                            }
-                        }, { probabilityThreshold: 0.85 });
-                    }
-
-                    setMicState('auto', 'WAKEWORD MODE');
-                    setBubbleState('wakeword');
-                    appendLog("[Neural Wake Word Engine Listening]");
-                } else {
-                    // Guide user to do quick local training
-                    await runInteractiveCalibration();
-                    // Retrigger mic initialization securely
-                    stopHybridMicSystem();
-                    startHybridMicSystem();
-                }
+                setMicState('auto', 'WAKEWORD MODE');
+                setBubbleState('wakeword');
+                appendLog("[Live Audio Pipeline Active]");
 
             } catch (err) {
                 console.error("Mic access denied or error:", err);
@@ -1014,7 +954,7 @@
             }
 
             try {
-                const response = await fetch('http://localhost:5000/transcribe', {
+                const response = await fetch(HTTP_URL + '/transcribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/octet-stream' },
                     body: int16Buffer
@@ -1066,14 +1006,11 @@
             }, 1500);
         }
 
-        // Bypasses hardware stream deletion to completely eliminate recurring prompts!
         function stopHybridMicSystem() {
             isMicActive = false;
+            isSpeaking = false;
             isRecordingCommand = false;
             
-            if (transferRecognizer && transferRecognizer.isListening()) {
-                transferRecognizer.stopListening();
-            }
             if (audioContext) {
                 audioContext.suspend();
             }
@@ -1086,7 +1023,7 @@
         micTriggerBtn.addEventListener('click', () => {
             if (!isMicActive) {
                 startHybridMicSystem();
-            } else if (!isRecordingCommand) {
+            } else if (!isCommandCapture) {
                 // Allows user to manually bypass the wake word (Push to Talk)
                 triggerCommandCapture();
             } else {
@@ -1124,7 +1061,7 @@
 
         function parseDurationToSeconds(text) {
             const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
+            const hourPattern = /(\d+)\s*(?:hour|hr|h|ours)/i;
             const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
             const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
 
@@ -1198,8 +1135,8 @@
                 }
                 
                 let finalNoteContent = rawInput.trim();
-                const noteWakewordRegex = wakeword.toLowerCase() === 'jesse' 
-                    ? /^\b(jesse|jessie|jessy)\b\s*/i 
+                const noteWakewordRegex = wakeword.toLowerCase() === 'neo' 
+                    ? /^\b(neo|nio)\b\s*/i 
                     : new RegExp(`^\\b${wakeword}\\b\\s*`, 'i');
                 finalNoteContent = finalNoteContent.replace(noteWakewordRegex, '').trim();
                 finalNoteContent = finalNoteContent.replace(/^[^a-zA-Z0-9]+/, '').trim();
@@ -1217,24 +1154,10 @@
                 return;
             }
 
-            if (trainingMode) {
-                const words = cleanedInput.split(/\s+/);
-                if (words.length > 0) {
-                    wakeword = words[0].toLowerCase();
-                    wakewordVal.textContent = wakeword.toUpperCase();
-                    trainingMode = false;
-                    awaitingCommand = false;
-                    
-                    setBubbleState('info', "Ready to learn a new name! Please say or type your desired new wakeword now.");
-                    speak(`Wakeword trained successfully. You can now prompt me with "${wakeword}"!`);
-                }
-                return;
-            }
-
             let isAddressed = false;
             let commandText = cleanedInput;
-            const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
-                ? /\b(jesse|jessie|jessy)\b/i 
+            const wakewordRegex = wakeword.toLowerCase() === 'neo' 
+                ? /^\b(neo|nio)\b/i 
                 : new RegExp(`\\b${wakeword}\\b`, 'i');
             const match = cleanedInput.match(wakewordRegex);
 
@@ -1258,11 +1181,6 @@
                     awaitingCommand = false;
                 }, 8000); 
                 speak("Yes?");
-                return;
-            }
-
-            if (/train.*wakeword|change.*wakeword/i.test(cleanCmd)) {
-                triggerWakewordTraining();
                 return;
             }
 
@@ -1832,7 +1750,6 @@
             lucide.createIcons();
         }
 
-        // Bypasses hardware stream deletion to completely eliminate recurring prompts!
         function closeDrawer() {
             controlDrawer.classList.add('translate-x-full');
             drawerIcon.setAttribute('data-lucide', 'menu');
@@ -1877,15 +1794,6 @@
             const tabBtn = Array.from(tabs).find(t => t.getAttribute('data-target') === tabId);
             if (tabBtn) tabBtn.click();
         }
-
-        function triggerWakewordTraining() {
-            // Retrain TF.js audio neural network
-            trainingMode = true;
-            switchTab('config-tab');
-            openDrawer();
-            runInteractiveCalibration();
-        }
-        trainWakewordBtn.addEventListener('click', triggerWakewordTraining);
 
         sendCommandBtn.addEventListener('click', () => {
             const val = commandInput.value.trim();
