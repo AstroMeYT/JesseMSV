@@ -277,7 +277,7 @@
         </div>
 
         <div class="text-center text-[9px] text-gray-500">
-            Smart Display Suite • Local Backend Edition
+            Smart Display Suite • Dual Backend/WASM Edition
         </div>
     </div>
 
@@ -699,17 +699,13 @@
         });
 
         // ==============================================================================
-        // HYBRID MIC SYSTEM: LOCAL WAKE-WORD -> LOCAL PYTHON SERVER TRANSCRIBE
+        // DUAL ENGINE: PYTHON BACKEND -> WASM BROWSER FALLBACK
         // ==============================================================================
         
-        // System Flags
         let isMicActive = false;
         let isRecordingCommand = false; 
         
-        // Web Speech API (Local Wake Word)
-        let localRecognizer = null;
-        
-        // WebAudio API (Cloud Transcribe Payload)
+        let localRecognizer = null; // Web Speech API (Local Wake Word)
         let audioContext = null;
         let processor = null;
         let audioBuffer = [];
@@ -723,6 +719,78 @@
 
         const micTriggerBtn = document.getElementById('mic-trigger-btn');
         const micBtnText = document.getElementById('mic-btn-text');
+
+        // --- BROWSER WASM FALLBACK INITIALIZATION ---
+        let whisperReady = false;
+        let whisperWorker = null;
+
+        const whisperWorkerCode = `
+            let transcriber = null;
+            let pipeline = null;
+            let env = null;
+
+            self.onmessage = async (e) => {
+                if (e.data.type === 'init') {
+                    try {
+                        // FIX: Use dynamic import to bypass strict Blob Module CORS rules
+                        const transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+                        pipeline = transformers.pipeline;
+                        env = transformers.env;
+                        env.allowLocalModels = false;
+
+                        transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
+                            quantized: true,
+                            progress_callback: (info) => {
+                                if (info.status === 'progress') {
+                                    self.postMessage({ type: 'progress', progress: info.progress });
+                                }
+                            }
+                        });
+                        self.postMessage({ type: 'status', message: 'Ready' });
+                    } catch (err) {
+                        self.postMessage({ type: 'error', message: err.message });
+                    }
+                } else if (e.data.type === 'transcribe') {
+                    if (!transcriber) return;
+                    try {
+                        let out = await transcriber(e.data.audio, { chunk_length_s: 30, stride_length_s: 5 });
+                        let textStr = "";
+                        if (Array.isArray(out)) {
+                            textStr = out.map(o => o.text).join(' ');
+                        } else if (out && out.text) {
+                            textStr = out.text;
+                        }
+                        self.postMessage({ type: 'result', text: textStr });
+                    } catch(err) {
+                        self.postMessage({ type: 'error', message: err.message });
+                    }
+                }
+            };
+        `;
+        const whisperBlob = new Blob([whisperWorkerCode], { type: 'application/javascript' });
+        const whisperWorkerUrl = URL.createObjectURL(whisperBlob);
+
+        function initWasmWhisper() {
+            if (whisperWorker) return;
+            
+            appendLog("[Starting background WASM Whisper pre-fetch...]");
+            // FIX: Removed { type: 'module' } to prevent browser from silently killing the worker
+            whisperWorker = new Worker(whisperWorkerUrl);
+            
+            whisperWorker.onmessage = (e) => {
+                if (e.data.type === 'status' && e.data.message === 'Ready') {
+                    whisperReady = true;
+                    appendLog("[Local WASM Fallback Engine Ready]");
+                } else if (e.data.type === 'result') {
+                    processTranscript(e.data.text || "", "WASM STT");
+                } else if (e.data.type === 'error') {
+                    console.error("Local Whisper WASM error:", e.data.message);
+                }
+            };
+            
+            whisperWorker.postMessage({ type: 'init' });
+        }
+
 
         function setMicState(state, text = null) {
             micTriggerBtn.classList.remove('bg-red-600', 'bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-yellow-500');
@@ -757,7 +825,9 @@
             try {
                 setMicState('init', 'INITIALIZING...');
                 
-                // 1. Warm up the mic stream to prevent latency and feed the Pre-Roll Buffer
+                // Spin up WASM background worker gracefully on boot
+                initWasmWhisper();
+                
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 const source = audioContext.createMediaStreamSource(mediaStream);
@@ -788,7 +858,7 @@
                     const rms = Math.sqrt(sum / inputData.length);
 
                     if (isRecordingCommand) {
-                        // PHASE 2: Command Capture (Recording for Python Server)
+                        // PHASE 2: Command Capture
                         audioBuffer.push(new Float32Array(inputData));
 
                         if (rms < SILENCE_THRESHOLD) {
@@ -800,7 +870,7 @@
                                     setMicState('processing', 'PROCESSING'); 
                                     setBubbleState('processing');
                                 });
-                                sendAudioToLocalServer();
+                                sendToBackendWithWasmFallback();
                             }
                         } else {
                             silenceFrames = 0; // Reset silence if they keep talking
@@ -829,6 +899,9 @@
                             transcript += event.results[i][0].transcript;
                         }
                         
+                        // Strip punctuation for safer wakeword matching
+                        transcript = transcript.replace(/[?!,;:]/g, '').replace(/(?<!\d)\.(?!\d)/g, '').replace(/\.+$/, '');
+                        
                         const wakewordRegex = wakeword.toLowerCase() === 'jesse' 
                             ? /\b(jesse|jessie|jessy)\b/i 
                             : new RegExp(`\\b${wakeword}\\b`, 'i');
@@ -838,7 +911,7 @@
                             
                             isRecordingCommand = true;
                             silenceFrames = 0;
-                            // Seamlessly copy the last 2 seconds of audio into the Python payload so words aren't cut
+                            // Seamlessly copy the last 2 seconds of audio into payload so words aren't cut
                             audioBuffer = [...preRollBuffer]; 
                             
                             if (!awaitingCommand && !trainingMode && !awaitingNoteContent) {
@@ -888,7 +961,7 @@
                     localRecognizer.start();
                     setMicState('auto', 'WAKEWORD MODE');
                     setBubbleState('wakeword');
-                    appendLog("[Hybrid Python Mic System Active]");
+                    appendLog("[Hybrid Engine Active]");
                 } else {
                     // Fallback for Firefox/Safari browsers missing Speech API
                     setMicState('auto', 'PUSH TO TALK');
@@ -902,49 +975,73 @@
             }
         }
 
-        async function sendAudioToLocalServer() {
+        async function sendToBackendWithWasmFallback() {
             let totalLength = audioBuffer.reduce((acc, val) => acc + val.length, 0);
-            let flattened = new Float32Array(totalLength);
+            let flattenedFloat32 = new Float32Array(totalLength);
             let offset = 0;
             for (let arr of audioBuffer) {
-                flattened.set(arr, offset);
+                flattenedFloat32.set(arr, offset);
                 offset += arr.length;
             }
             audioBuffer = [];
 
             // Convert Float32Array to Int16Array for Python Server Backend
-            const int16Buffer = new Int16Array(flattened.length);
-            for (let i = 0; i < flattened.length; i++) {
-                let s = Math.max(-1, Math.min(1, flattened[i]));
+            const int16Buffer = new Int16Array(flattenedFloat32.length);
+            for (let i = 0; i < flattenedFloat32.length; i++) {
+                let s = Math.max(-1, Math.min(1, flattenedFloat32[i]));
                 int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
 
             try {
-                // Post directly to the local Faster-Whisper Flask server!
+                // PRIMARY ROUTE: Try local python server first! (Instant speed)
                 const response = await fetch('http://127.0.0.1:5000/transcribe', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/octet-stream'
-                    },
+                    headers: { 'Content-Type': 'application/octet-stream' },
                     body: int16Buffer
                 });
                 
+                if (!response.ok) throw new Error("Backend response error");
                 const data = await response.json();
                 
                 if (data.status === 'success' && data.text) {
-                    appendLog(`Python STT: "${data.text}"`);
-                    // Prepend the wakeword explicitly to ensure NLP router always accepts the transcribed string
-                    handleCommand(wakeword + " " + data.text);
+                    processTranscript(data.text, "Python STT");
                 } else {
                     setBubbleState('info', "Didn't hear any clear command.");
+                    resetUIState();
                 }
 
             } catch (err) {
-                console.error("Local Python Server Error:", err);
-                setBubbleState('info', "Server offline. Ensure local_stt_server.py is running!");
+                // FALLBACK ROUTE: Backend failed/offline. Use offline WASM in browser.
+                console.warn("Python Server offline. Falling back to local WASM Engine!", err);
+                if (whisperReady && whisperWorker) {
+                    setBubbleState('info', "Server unreachable. Using offline WASM fallback...");
+                    whisperWorker.postMessage({ type: 'transcribe', audio: flattenedFloat32 });
+                } else {
+                    setBubbleState('info', "Backend and WASM offline. Cannot transcribe.");
+                    resetUIState();
+                }
             }
+        }
 
-            // Restore visual UI state to Local Wakeword mode
+        function processTranscript(rawText, sourceEngine) {
+            // Strip out Whisper ambient hallucinations and ALL punctuation (except decimals)
+            let cleanText = rawText.replace(/\[.*?\]|\(.*?\)/g, '')
+                                   .replace(/[?!,;:]/g, '')
+                                   .replace(/(?<!\d)\.(?!\d)/g, '')
+                                   .replace(/\.+$/, '')
+                                   .trim();
+                                     
+            if (cleanText) {
+                appendLog(`${sourceEngine}: "${cleanText}"`);
+                // Prepend the wakeword explicitly to ensure NLP router always accepts the transcribed string
+                handleCommand(wakeword + " " + cleanText);
+            } else {
+                setBubbleState('info', "Didn't hear any clear command.");
+            }
+            resetUIState();
+        }
+
+        function resetUIState() {
             setTimeout(() => {
                 if (isMicActive) {
                     setMicState('auto', 'WAKEWORD MODE');
@@ -1086,6 +1183,10 @@
         // CORE SKILLS ROUTER (Enhanced Leniency)
         // ==============================================================================
         function handleCommand(rawInput) {
+            // Strip any remaining punctuation (except decimals) to prevent matching logic from breaking
+            rawInput = rawInput.replace(/[?!,;:]/g, '')
+                               .replace(/(?<!\d)\.(?!\d)/g, '')
+                               .replace(/\.+$/, '');
             let cleanedInput = rawInput.toLowerCase().trim();
 
             if (awaitingNoteContent) {
@@ -1181,7 +1282,7 @@
 
             if (/\b(weather|temperature|forecast)\b/i.test(cleanCmd) && !/\b(watch|play|stream|tv)\b/i.test(cleanCmd)) {
                 if (currentWeatherState.temp !== null) {
-                    speak(`The current weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees Fahrenheit and ${currentWeatherState.condition}.`);
+                    speak(`The weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees Fahrenheit and ${currentWeatherState.condition}.`);
                 } else {
                     speak("I am still trying to pinpoint your location and load the weather data. Please try again in a moment.");
                 }
@@ -1549,7 +1650,7 @@
             
             let weatherStr = "I'm still loading the weather data.";
             if (currentWeatherState.temp !== null) {
-                weatherStr = `Currently in ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees and ${currentWeatherState.condition}. `;
+                weatherStr = `In ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees and ${currentWeatherState.condition}. `;
                 if (currentWeatherState.high !== null) {
                     weatherStr += `Today's outlook calls for ${currentWeatherState.forecastCondition.toLowerCase()}, with a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}. `;
                 }
