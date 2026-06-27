@@ -678,7 +678,7 @@
                     if (!awaitingCommand && !isRecordingCommand) {
                         setBubbleState(isMicActive ? 'wakeword' : 'idle');
                     }
-                }, 800);
+                }, 1500); // Extended to 1500ms for full room reverberation decay
             };
             utterance.onerror = () => { 
                 setTimeout(() => {
@@ -686,7 +686,7 @@
                     if (!awaitingCommand && !isRecordingCommand) {
                         setBubbleState(isMicActive ? 'wakeword' : 'idle');
                     }
-                }, 800);
+                }, 1500);
             };
 
             setBubbleState('info', text);
@@ -1124,7 +1124,7 @@
 
         function parseDurationToSeconds(text) {
             const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|ours)/i;
+            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
             const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
             const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
 
@@ -1478,7 +1478,7 @@
                 startRadio(foundChannel.url, foundChannel.name);
             } else {
                 try {
-                    const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
+                    const apiUrl = "https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true";
                     
                     let res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery) + "&tag=video");
                     let data = await res.json();
@@ -1512,7 +1512,7 @@
                 speak(`Searching for ${query}...`);
                 let cleanQuery = query.replace(/\b(music|radio|station|channel|news)\b/gi, '').trim();
                 
-                const apiUrl = `https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true`;
+                const apiUrl = "https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true";
                 let res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery));
                 let data = await res.json();
                 
@@ -1658,7 +1658,7 @@
 
             try {
                 const rssUrl = encodeURIComponent('http://feeds.bbci.co.uk/news/world/rss.xml');
-                const newsRes = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`);
+                const newsRes = await fetch("https://api.rss2json.com/v1/api.json?rss_url=" + rssUrl);
                 const newsData = await newsRes.json();
 
                 let newsStr = "I couldn't load the latest news right now.";
@@ -1697,7 +1697,7 @@
 
         function fetchWikipediaSummary(query) {
             speak(`Searching Wikipedia for ${query}...`);
-            const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query.replace(/\s+/g, '_'))}`;
+            const url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(query.replace(/\s+/g, '_'));
             
             fetch(url)
                 .then(response => {
