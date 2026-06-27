@@ -199,7 +199,7 @@
                     <button id="manual-connect-btn" class="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold px-4 rounded-xl transition-all shadow-md active:scale-95">Link</button>
                 </div>
                 
-                <button id="disconnect-btn" class="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-semibold py-2 rounded-xl transition-all active:scale-95">Disconnect Assistant</button>
+                <button id="disconnect-btn" class="w-full mt-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-semibold py-2 rounded-xl transition-all active:scale-95">Disconnect Assistant</button>
                 
                 <!-- DIAGNOSTICS LOG -->
                 <div class="h-px bg-gray-700/50 w-full"></div>
@@ -393,19 +393,25 @@
         });
 
         // ==============================================================================
-        // PEER.JS NETWORK OVERHAUL
+        // PEER.JS NETWORK OVERHAUL (With Keep-Alive PING Loop)
         // ==============================================================================
+        let heartbeatInterval = null;
+        function startHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            heartbeatInterval = setInterval(() => {
+                if (peer && !peer.disconnected && !peer.destroyed) {
+                    if (peer.socket && typeof peer.socket.send === 'function') {
+                        peer.socket.send({ type: 'PING' });
+                    }
+                }
+            }, 15000); // Send PING frame every 15 seconds to keep WebSocket active
+        }
+
         function initPeer() {
             addLog("Attempting connection to signaling directory...");
             updateStatus('Resolving...', 'bg-yellow-500');
 
-            // Force production-grade broker configurations with manual stun negotiations
             peer = new Peer({
-                host: '0.peerjs.com',
-                port: 443,
-                path: '/',
-                secure: true,
-                debug: 3,
                 config: {
                     'iceServers': [
                         { urls: 'stun:stun.l.google.com:19302' },
@@ -416,6 +422,7 @@
             
             peer.on('open', (id) => {
                 addLog(`Registered securely on signaling broker with ID: ${id}`);
+                startHeartbeat();
                 if (savedAssistantId) {
                     connectToAssistant(savedAssistantId);
                 } else {
@@ -458,10 +465,8 @@
             addLog(`Dialing tunnels for display: ${cleanId}`);
             updateStatus('Connecting...', 'bg-yellow-500');
             
-            // Initiate raw data connection
-            assistantConn = peer.connect(cleanId, {
-                reliable: true
-            });
+            // Standard peer connection config to prevent immediate WebRTC drops
+            assistantConn = peer.connect(cleanId);
 
             assistantConn.on('open', () => {
                 addLog("Secure WebRTC tunnel successfully established! Handshake complete.");
