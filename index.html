@@ -379,6 +379,7 @@
         let isSleepMode = false;
         let isAssistantSpeaking = false; 
         let speechSafetyTimeout = null; // Watchdog watchdog for TTS stuck state
+        let currentVolume = 0.5;
 
         // Contextual Suggestions Rotation logic
         const suggestions = [
@@ -819,6 +820,17 @@
         let synth = window.speechSynthesis;
         let voices = [];
 
+        function setSystemVolume(level) {
+            currentVolume = level / 10;
+            const alarmAudio = document.getElementById('alarm-audio');
+            const wakeAudio = document.getElementById('wake-chime-audio');
+            const mainMedia = document.getElementById('main-media-player');
+            if (alarmAudio) alarmAudio.volume = currentVolume;
+            if (wakeAudio) wakeAudio.volume = currentVolume;
+            if (mainMedia) mainMedia.volume = currentVolume;
+            appendLog(`[System Volume Set to ${level}]`);
+        }
+
         function loadVoices() {
             if (!synth) return;
             voices = synth.getVoices();
@@ -871,6 +883,7 @@
             }, 12000);
             
             const utterance = new SpeechSynthesisUtterance(text);
+            utterance.volume = currentVolume;
             const selectedVoice = voices.find(v => v.name === selectedVoiceName);
             if (selectedVoice) {
                 utterance.voice = selectedVoice;
@@ -1330,6 +1343,31 @@
                 return;
             }
 
+            if (/\bvolume\b/i.test(cleanCmd)) {
+                let parsedCmd = parseEnglishNumbers(commandText);
+                let match = parsedCmd.match(/\bvolume\s+(\d+)\b/i);
+                if (match) {
+                    let level = parseInt(match[1], 10);
+                    level = Math.max(0, Math.min(10, level)); // Clamp between 0 and 10
+                    setSystemVolume(level);
+                }
+                resetUIState();
+                return;
+            }
+
+            if (/\b(my name is|call me|set my name to|i am)\s+(.+)/i.test(cleanCmd)) {
+                const match = cleanCmd.match(/\b(my name is|call me|set my name to|i am)\s+(.+)/i);
+                if (match && match[2]) {
+                    let newName = match[2].trim();
+                    newName = newName.charAt(0).toUpperCase() + newName.slice(1);
+                    userName = newName;
+                    localStorage.setItem('echo_user_name', userName);
+                    speak(`Nice to meet you, ${userName}. I will remember that.`);
+                }
+                resetUIState();
+                return;
+            }
+
             if (/\b(pair|connect|link)\b.*\b(phone|qr code)\b/i.test(cleanCmd)) {
                 showPairingQR();
                 resetUIState();
@@ -1435,6 +1473,43 @@
                 return;
             }
 
+            if (/\b(remind me|set a reminder)\b/i.test(cleanCmd)) {
+                let numText = parseEnglishNumbers(commandText);
+                let seconds = parseDurationToSeconds(numText);
+                
+                if (seconds > 0) {
+                    let reminderText = numText.replace(/\b(remind me|set a reminder)\b/ig, '');
+                    // Strip the duration phrase dynamically using regex
+                    reminderText = reminderText.replace(/\b(in|for|after|and)\s+\d+\s+(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/ig, '');
+                    // Clean up leading grammar so the payload is pure (e.g., "to feed the dog" -> "feed the dog")
+                    reminderText = reminderText.replace(/^\s*(to|that|about)\s+/i, '').trim();
+                    
+                    if (reminderText) {
+                        setTimeout(() => {
+                            playWakeChime().then(() => {
+                                speak(`This is your reminder to ${reminderText}.`);
+                            });
+                        }, seconds * 1000);
+                        
+                        let timeDesc = "";
+                        let h = Math.floor(seconds / 3600);
+                        let m = Math.floor((seconds % 3600) / 60);
+                        let s = seconds % 60;
+                        if (h > 0) timeDesc += `${h} hours `;
+                        if (m > 0) timeDesc += `${m} minutes `;
+                        if (s > 0) timeDesc += `${s} seconds`;
+                        
+                        speak(`I will remind you to ${reminderText} in ${timeDesc.trim()}.`);
+                    } else {
+                        speak("What do you want me to remind you about?");
+                    }
+                } else {
+                    speak("When do you want me to remind you?");
+                }
+                resetUIState();
+                return;
+            }
+
             if (/\b(flip|toss)\b.*\b(coin)\b/i.test(cleanCmd)) {
                 const result = Math.random() < 0.5 ? "Heads" : "Tails";
                 speak(`I flipped a coin and got ${result}!`);
@@ -1482,7 +1557,24 @@
                 return;
             }
 
-            if (/\b(radio|music|stream|play|listen to)\b/i.test(cleanCmd) && !cleanCmd.includes("flip")) {
+            if (/\b(rain sounds|rain noise|play rain)\b/i.test(cleanCmd)) {
+                if (!assistantPermissions.allowRadio) {
+                    speak("Media features are currently disabled in your manager app.");
+                    resetUIState();
+                    return;
+                }
+                if (/\b(stop|pause|turn off)\b/i.test(cleanCmd)) {
+                    stopRadio();
+                    speak("Playback stopped.");
+                } else {
+                    speak("Playing rain ambient noise.");
+                    startRadio("rain.wav", "Rain Sounds", true);
+                }
+                resetUIState();
+                return;
+            }
+
+            if (/\b(radio|music|stream|play|listen to)\b/i.test(cleanCmd) && !cleanCmd.includes("flip") && !cleanCmd.includes("rain")) {
                 if (!assistantPermissions.allowRadio) {
                     speak("Radio features are currently disabled in your manager app.");
                     resetUIState();
@@ -1652,11 +1744,12 @@
             }
         }
 
-        function startRadio(url, name) {
+        function startRadio(url, name, loop = false) {
             stopRadio(); 
             currentRadioUrl = url;
             currentRadioName = name;
             videoTitle.textContent = name;
+            mainMediaPlayer.loop = loop;
             
             if (window.Hls && Hls.isSupported() && url.toLowerCase().includes('m3u8')) {
                 hlsPlayer = new Hls();
@@ -1696,6 +1789,7 @@
             }
             mainMediaPlayer.pause();
             mainMediaPlayer.removeAttribute('src');
+            mainMediaPlayer.loop = false;
             mainMediaPlayer.load();
             
             radioPlaying = false;
@@ -2030,6 +2124,9 @@
             consoleLogs.appendChild(logSpan);
             consoleLogs.scrollTop = consoleLogs.scrollHeight;
         }
+
+        // Set default volume on startup
+        setSystemVolume(5);
 
         // Initialize UI State
         setBubbleState('idle'); 

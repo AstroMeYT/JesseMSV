@@ -51,15 +51,7 @@
         let radioPlaying = false;
         let hlsPlayer = null; 
         let isAssistantSpeaking = false; 
-
-        const WEATHER_CODES = {
-            0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-            45: "Fog", 48: "Depositing rime fog",
-            51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-            61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-            71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
-            95: "Thunderstorm"
-        };
+        let currentVolume = 0.5;
 
         // Weather state
         let currentWeatherState = { temp: null, condition: "Loading", city: "Locating...", high: null, low: null, wind: null };
@@ -77,6 +69,15 @@
         // ==============================================================================
         // WEATHER ENGINE
         // ==============================================================================
+        const WEATHER_CODES = {
+            0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+            45: "Fog", 48: "Depositing rime fog",
+            51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+            61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+            71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
+            95: "Thunderstorm"
+        };
+
         async function fetchLiveWeather(lat, lon) {
             try {
                 const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=1`);
@@ -113,6 +114,17 @@
         let synth = window.speechSynthesis;
         let speechSafetyTimeout = null;
 
+        function setSystemVolume(level) {
+            currentVolume = level / 10;
+            const alarmAudio = document.getElementById('alarm-audio');
+            const wakeAudio = document.getElementById('wake-chime-audio');
+            const mainAudio = document.getElementById('main-audio-player');
+            if (alarmAudio) alarmAudio.volume = currentVolume;
+            if (wakeAudio) wakeAudio.volume = currentVolume;
+            if (mainAudio) mainAudio.volume = currentVolume;
+            logTranscript(`[Volume set to ${level}]`);
+        }
+
         function speak(text) {
             if (!synth) return;
             if (synth.speaking || synth.pending) synth.cancel(); 
@@ -129,6 +141,7 @@
             }, 12000);
             
             const utterance = new SpeechSynthesisUtterance(text);
+            utterance.volume = currentVolume;
 
             utterance.onstart = () => { isAssistantSpeaking = true; };
             utterance.onend = () => { 
@@ -296,6 +309,30 @@
                 return;
             }
 
+            if (/\bvolume\b/i.test(commandText)) {
+                let parsedCmd = parseEnglishNumbers(commandText);
+                let match = parsedCmd.match(/\bvolume\s+(\d+)\b/i);
+                if (match) {
+                    let level = parseInt(match[1], 10);
+                    level = Math.max(0, Math.min(10, level)); // Clamp between 0 and 10
+                    setSystemVolume(level);
+                }
+                return;
+            }
+
+            if (/\b(my name is|call me|set my name to|i am)\s+(.+)/i.test(commandText)) {
+                const match = commandText.match(/\b(my name is|call me|set my name to|i am)\s+(.+)/i);
+                if (match && match[2]) {
+                    let newName = match[2].trim();
+                    // Capitalize the first letter for a proper greeting
+                    newName = newName.charAt(0).toUpperCase() + newName.slice(1);
+                    userName = newName;
+                    localStorage.setItem('echo_user_name', userName);
+                    speak(`Nice to meet you, ${userName}. I will remember that.`);
+                }
+                return;
+            }
+
             if (/\b(good morning|morning sequence|wake up sequence)\b/i.test(commandText)) {
                 runGoodMorningSequence();
                 return;
@@ -313,6 +350,42 @@
                     speak(`Right now in ${currentWeatherState.city}, it's ${currentWeatherState.temp} degrees Fahrenheit with ${currentWeatherState.condition.toLowerCase()} and winds at ${currentWeatherState.wind} miles per hour. Today's forecast calls for a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}.`);
                 } else {
                     speak("I am still loading the weather data.");
+                }
+                return;
+            }
+
+            if (/\b(remind me|set a reminder)\b/i.test(commandText)) {
+                let numText = parseEnglishNumbers(commandText);
+                let seconds = parseDurationToSeconds(numText);
+                
+                if (seconds > 0) {
+                    let reminderText = numText.replace(/\b(remind me|set a reminder)\b/ig, '');
+                    // Strip the duration phrase dynamically using regex (e.g., "in 45 minutes", "and 30 seconds")
+                    reminderText = reminderText.replace(/\b(in|for|after|and)\s+\d+\s+(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/ig, '');
+                    // Clean up leading grammar so the payload is pure (e.g., "to feed the dog" -> "feed the dog")
+                    reminderText = reminderText.replace(/^\s*(to|that|about)\s+/i, '').trim();
+                    
+                    if (reminderText) {
+                        setTimeout(() => {
+                            playWakeChime().then(() => {
+                                speak(`This is your reminder to ${reminderText}.`);
+                            });
+                        }, seconds * 1000);
+                        
+                        let timeDesc = "";
+                        let h = Math.floor(seconds / 3600);
+                        let m = Math.floor((seconds % 3600) / 60);
+                        let s = seconds % 60;
+                        if (h > 0) timeDesc += `${h} hours `;
+                        if (m > 0) timeDesc += `${m} minutes `;
+                        if (s > 0) timeDesc += `${s} seconds`;
+                        
+                        speak(`I will remind you to ${reminderText} in ${timeDesc.trim()}.`);
+                    } else {
+                        speak("What do you want me to remind you about?");
+                    }
+                } else {
+                    speak("When do you want me to remind you?");
                 }
                 return;
             }
@@ -340,6 +413,17 @@
                         awaitingNoteContent = true;
                         speak("What is the note?");
                     }
+                }
+                return;
+            }
+
+            if (/\b(rain sounds|rain noise|play rain)\b/i.test(commandText)) {
+                if (/\b(stop|pause|turn off)\b/i.test(commandText)) {
+                    stopRadio();
+                    speak("Playback stopped.");
+                } else {
+                    speak("Playing rain ambient noise.");
+                    startRadio("rain.wav", "Rain Sounds", true);
                 }
                 return;
             }
@@ -397,8 +481,9 @@
             }
         }
 
-        function startRadio(url, name) {
+        function startRadio(url, name, loop = false) {
             stopRadio(); 
+            mainAudioPlayer.loop = loop;
             if (window.Hls && Hls.isSupported() && url.toLowerCase().includes('m3u8')) {
                 hlsPlayer = new Hls();
                 hlsPlayer.loadSource(url);
@@ -416,6 +501,7 @@
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
             mainAudioPlayer.pause();
             mainAudioPlayer.removeAttribute('src');
+            mainAudioPlayer.loop = false;
             mainAudioPlayer.load();
             radioPlaying = false;
         }
@@ -505,7 +591,10 @@
         // ==============================================================================
         // BOOT SEQUENCE
         // ==============================================================================
-        activateBtn.addEventListener('click', () => {
+        
+        function initializeSystem() {
+            if (isMicActive) return; // Prevent double boot
+
             startupContainer.classList.add('hidden');
             activeContainer.classList.remove('hidden');
             activeContainer.classList.add('flex');
@@ -521,7 +610,22 @@
                 systemStatus.textContent = "MIC BLOCKED";
                 statusIndicator.classList.replace('bg-green-500', 'bg-red-500');
             });
-        });
+        }
+
+        // Manual trigger
+        activateBtn.addEventListener('click', initializeSystem);
+
+        // Set default volume on startup
+        setSystemVolume(5);
+
+        // Auto-Initialize Mic if Permissions are Already Granted
+        if (navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({ name: 'microphone' }).then((perm) => {
+                if (perm.state === 'granted') {
+                    initializeSystem();
+                }
+            }).catch(e => console.warn(e));
+        }
 
     </script>
 </body>
