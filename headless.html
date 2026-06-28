@@ -53,6 +53,13 @@
         let isAssistantSpeaking = false; 
         let currentVolume = 0.5;
 
+        // Helper to control Raspberry Pi GPIO LED visually
+        function setAssistantLed(action) {
+            const gpioServerUrl = "http://127.0.0.1:5001"; 
+            return fetch(`${gpioServerUrl}/led/${action}`)
+                .catch(err => console.warn("GPIO server offline or unreachable"));
+        }
+
         // Weather state
         let currentWeatherState = { temp: null, condition: "Loading", city: "Locating...", high: null, low: null, wind: null };
         let userLocation = { lat: null, lon: null, city: null };
@@ -229,6 +236,7 @@
                             await playWakeChime();
                             isChiming = false;
                             isCommandCapture = true;
+                            setAssistantLed("flash");
                             systemStatus.textContent = "RECORDING COMMAND...";
                             try { recognition.start(); } catch(e){}
                         }
@@ -237,13 +245,20 @@
                     logTranscript(`[Listening]: ${currentText}`);
                     if (finalTranscript) {
                         isCommandCapture = false;
+                        setAssistantLed("off");
                         systemStatus.textContent = "PROCESSING...";
                         processTranscript(finalTranscript);
                     }
                 }
             };
 
-            recognition.onerror = () => {};
+            recognition.onerror = (event) => {
+                if (isCommandCapture && (event.error === 'no-speech' || event.error === 'aborted')) {
+                    isCommandCapture = false;
+                    setAssistantLed("off");
+                    systemStatus.textContent = "LISTENING";
+                }
+            };
 
             recognition.onend = () => {
                 if (isMicActive && !isChiming) {
@@ -317,6 +332,14 @@
                     level = Math.max(0, Math.min(10, level)); // Clamp between 0 and 10
                     setSystemVolume(level);
                 }
+                return;
+            }
+
+            if (/\b(turn on|turn off|turn)\b.*\b(light|led|lights)\b/i.test(commandText)) {
+                const action = /\bon\b/i.test(commandText) ? "on" : "off";
+                setAssistantLed(action).then(res => {
+                    if (res && res.ok) speak(`Turning the light ${action}.`);
+                });
                 return;
             }
 
