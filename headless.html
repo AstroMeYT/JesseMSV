@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jessie (Background)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { background-color: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+    </style>
+</head>
+<body class="h-full flex flex-col items-center justify-center select-none">
+
+    <!-- Minimal Activation UI (Required to unlock browser microphone & audio autoplay) -->
+    <div id="startup-container" class="flex flex-col items-center justify-center p-6 text-center">
+        <div class="w-16 h-16 rounded-full bg-cyan-900/30 flex items-center justify-center mb-4 border border-cyan-500/50 animate-pulse">
+            <svg class="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+        </div>
+        <h1 class="text-2xl font-bold tracking-widest text-gray-200 mb-2">JESSIE</h1>
+        <p class="text-sm text-gray-500 mb-8 max-w-xs">Background Audio Engine</p>
+        
+        <button id="activate-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all active:scale-95 tracking-widest uppercase">
+            Initialize Engine
+        </button>
+    </div>
+
+    <!-- Active State UI (Hidden until activated) -->
+    <div id="active-container" class="hidden flex-col items-center justify-center w-full max-w-md p-6">
+        <div id="mic-status-indicator" class="w-4 h-4 rounded-full bg-green-500 shadow-[0_0_15px_#22c55e] mb-6"></div>
+        <p id="system-status" class="text-xs text-gray-400 uppercase tracking-widest font-mono text-center">System Active</p>
+        <p id="transcript-log" class="text-lg font-light text-cyan-100 mt-6 text-center h-20 overflow-hidden opacity-75 italic"></p>
+    </div>
+
+    <!-- Background Audio Elements -->
+    <audio id="alarm-audio" src="https://assets.mixkit.co/active_storage/sfx/2013/2013-84.wav" preload="auto"></audio>
+    <audio id="wake-chime-audio" src="chime.wav" preload="auto"></audio>
+    <audio id="main-audio-player" preload="none"></audio>
+
+    <script>
+        // State variables
+        let wakeword = "jessie"; 
+        let userName = localStorage.getItem('echo_user_name') || "Friend";
+        let localNotes = JSON.parse(localStorage.getItem('echo_notes')) || [];
+        
+        let awaitingNoteContent = false;
+        let awaitingCommand = false; 
+        let timerActive = false;
+        let timerSecondsLeft = 0;
+        let timerInterval = null;
+        let radioPlaying = false;
+        let hlsPlayer = null; 
+        let isAssistantSpeaking = false; 
+
+        const WEATHER_CODES = {
+            0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+            45: "Fog", 48: "Depositing rime fog",
+            51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+            61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+            71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
+            95: "Thunderstorm"
+        };
+
+        // Weather state
+        let currentWeatherState = { temp: null, condition: "Loading", city: "Locating...", high: null, low: null, wind: null };
+        let userLocation = { lat: null, lon: null, city: null };
+
+        // DOM Elements
+        const activateBtn = document.getElementById('activate-btn');
+        const startupContainer = document.getElementById('startup-container');
+        const activeContainer = document.getElementById('active-container');
+        const statusIndicator = document.getElementById('mic-status-indicator');
+        const systemStatus = document.getElementById('system-status');
+        const transcriptLog = document.getElementById('transcript-log');
+        const mainAudioPlayer = document.getElementById('main-audio-player');
+
+        // ==============================================================================
+        // WEATHER ENGINE
+        // ==============================================================================
+        async function fetchLiveWeather(lat, lon) {
+            try {
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=1`);
+                const weatherData = await weatherRes.json();
+
+                currentWeatherState.temp = Math.round(weatherData.current.temperature_2m);
+                currentWeatherState.condition = WEATHER_CODES[weatherData.current.weather_code] || "Clear skies";
+                currentWeatherState.wind = Math.round(weatherData.current.wind_speed_10m);
+                currentWeatherState.high = Math.round(weatherData.daily.temperature_2m_max[0]);
+                currentWeatherState.low = Math.round(weatherData.daily.temperature_2m_min[0]);
+                
+                // Get city name roughly
+                const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+                const geoData = await geoRes.json();
+                currentWeatherState.city = geoData.city || geoData.locality || "Local Area";
+
+            } catch (e) { console.warn("Weather fetch error", e); }
+        }
+
+        function getLocationAndWeather() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => fetchLiveWeather(pos.coords.latitude, pos.coords.longitude),
+                    () => fetchLiveWeather(40.7128, -74.0060) // Default to NYC if blocked
+                );
+            }
+        }
+        getLocationAndWeather();
+        setInterval(getLocationAndWeather, 15 * 60 * 1000);
+
+        // ==============================================================================
+        // SPEECH SYNTHESIS
+        // ==============================================================================
+        let synth = window.speechSynthesis;
+        let speechSafetyTimeout = null;
+
+        function speak(text) {
+            if (!synth) return;
+            if (synth.speaking || synth.pending) synth.cancel(); 
+            
+            isAssistantSpeaking = true; 
+            systemStatus.textContent = "SPEAKING...";
+            
+            if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
+            speechSafetyTimeout = setTimeout(() => {
+                if (isAssistantSpeaking) {
+                    isAssistantSpeaking = false;
+                    systemStatus.textContent = "LISTENING";
+                }
+            }, 12000);
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+
+            utterance.onstart = () => { isAssistantSpeaking = true; };
+            utterance.onend = () => { 
+                if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
+                setTimeout(() => {
+                    isAssistantSpeaking = false; 
+                    systemStatus.textContent = "LISTENING";
+                }, 1000); 
+            };
+            utterance.onerror = () => { 
+                if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
+                setTimeout(() => {
+                    isAssistantSpeaking = false; 
+                    systemStatus.textContent = "LISTENING";
+                }, 1000);
+            };
+
+            synth.speak(utterance);
+            logTranscript(`Echo: ${text}`);
+        }
+
+        // ==============================================================================
+        // WEB SPEECH ENGINE
+        // ==============================================================================
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let isMicActive = false;
+        let isCommandCapture = false;
+
+        function playWakeChime() {
+            return new Promise((resolve) => {
+                try {
+                    const chimeAudio = document.getElementById('wake-chime-audio');
+                    if (chimeAudio) {
+                        chimeAudio.currentTime = 0;
+                        chimeAudio.onended = resolve;
+                        chimeAudio.onerror = resolve; 
+                        chimeAudio.play().catch(() => resolve());
+                    } else resolve();
+                } catch (e) { resolve(); }
+            });
+        }
+
+        function initWebSpeech() {
+            if (!SpeechRecognition) {
+                alert("Browser doesn't support Native Speech API.");
+                return false;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            let isChiming = false;
+
+            recognition.onresult = async (event) => {
+                if (isAssistantSpeaking || !isMicActive || isChiming) return;
+
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+                    else interimTranscript += event.results[i][0].transcript;
+                }
+
+                let currentText = (finalTranscript || interimTranscript).trim().toLowerCase();
+                if (!currentText) return;
+
+                if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
+                    const wakewordRegex = new RegExp(`\\b(${wakeword}|jesse|hey ${wakeword}|hi ${wakeword})`, 'i');
+                    const match = currentText.match(wakewordRegex);
+
+                    if (match) {
+                        isChiming = true;
+                        const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
+                        
+                        if (finalTranscript && textAfterWakeword.length > 2) {
+                            await playWakeChime();
+                            isChiming = false;
+                            processTranscript(finalTranscript);
+                        } else {
+                            try { recognition.abort(); } catch(e){}
+                            await playWakeChime();
+                            isChiming = false;
+                            isCommandCapture = true;
+                            systemStatus.textContent = "RECORDING COMMAND...";
+                            try { recognition.start(); } catch(e){}
+                        }
+                    }
+                } else {
+                    logTranscript(`[Listening]: ${currentText}`);
+                    if (finalTranscript) {
+                        isCommandCapture = false;
+                        systemStatus.textContent = "PROCESSING...";
+                        processTranscript(finalTranscript);
+                    }
+                }
+            };
+
+            recognition.onerror = () => {};
+
+            recognition.onend = () => {
+                if (isMicActive && !isChiming) {
+                    setTimeout(() => { if (isMicActive) try { recognition.start(); } catch(e){} }, 200);
+                }
+            };
+
+            return true;
+        }
+
+        function processTranscript(rawText) {
+            let cleanText = rawText.replace(/\[.*?\]|\(.*?\)/g, '').replace(/[?!,;:]/g, '').replace(/(?<!\d)\.(?!\d)/g, '').replace(/\.+$/, '').trim();
+            if (cleanText) {
+                logTranscript(`You: "${cleanText}"`);
+                handleCommand(wakeword + " " + cleanText);
+            } else {
+                systemStatus.textContent = "LISTENING";
+            }
+        }
+
+        function logTranscript(text) {
+            transcriptLog.textContent = text;
+        }
+
+        // ==============================================================================
+        // CORE SKILLS ROUTER
+        // ==============================================================================
+        function handleCommand(rawInput) {
+            let cleanedInput = rawInput.toLowerCase().trim();
+
+            if (awaitingNoteContent) {
+                if (cleanedInput === "cancel" || cleanedInput === "nevermind" || cleanedInput === "stop") {
+                    awaitingNoteContent = false; awaitingCommand = false;
+                    speak("Note cancelled."); return;
+                }
+                let finalNoteContent = rawInput.replace(new RegExp(`^\\b(${wakeword}|jesse)\\b\\s*`, 'i'), '').trim();
+                if (finalNoteContent) {
+                    localNotes.push(finalNoteContent);
+                    localStorage.setItem('echo_notes', JSON.stringify(localNotes));
+                    speak("I've saved your note.");
+                }
+                awaitingNoteContent = false; awaitingCommand = false; return;
+            }
+
+            let isAddressed = false;
+            let commandText = cleanedInput;
+            const wakewordRegex = new RegExp(`\\b(${wakeword}|jesse)\\b`, 'i');
+            const match = cleanedInput.match(wakewordRegex);
+
+            if (match) {
+                isAddressed = true;
+                commandText = cleanedInput.substring(match.index + match[0].length).trim();
+            } else if (awaitingCommand) {
+                isAddressed = true;
+                commandText = cleanedInput;
+            }
+
+            awaitingCommand = false;
+
+            if (isAddressed && commandText === "") {
+                awaitingCommand = true;
+                speak("Yes?");
+                return;
+            }
+
+            if (/\b(good morning|morning sequence|wake up sequence)\b/i.test(commandText)) {
+                runGoodMorningSequence();
+                return;
+            }
+
+            if (/\b(time|date|clock)\b/i.test(commandText)) {
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                speak(`It is currently ${timeStr}.`);
+                return;
+            }
+
+            if (/\b(weather|temperature|forecast)\b/i.test(commandText)) {
+                if (currentWeatherState.temp !== null) {
+                    speak(`Right now in ${currentWeatherState.city}, it's ${currentWeatherState.temp} degrees Fahrenheit with ${currentWeatherState.condition.toLowerCase()} and winds at ${currentWeatherState.wind} miles per hour. Today's forecast calls for a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}.`);
+                } else {
+                    speak("I am still loading the weather data.");
+                }
+                return;
+            }
+
+            if (/\b(timer|second|minute|hour)\b/i.test(commandText)) {
+                const seconds = parseDurationToSeconds(commandText);
+                if (seconds > 0) {
+                    startTimer(seconds);
+                    speak(`Timer set for ${seconds} seconds.`);
+                } else speak("How long for the timer?");
+                return;
+            }
+
+            if (/\b(note|remember|write)\b/i.test(commandText)) {
+                if (/\b(list|read|show)\b/i.test(commandText)) {
+                    if (localNotes.length > 0) speak(`Here are your notes: ${localNotes.join(", ")}`);
+                    else speak("You don't have any notes.");
+                } else {
+                    const match = commandText.match(/\b(note|write down|write a note)\s+(?:to\s+|that\s+)?(.+)/i);
+                    if (match && match[2]) {
+                        localNotes.push(match[2].trim());
+                        localStorage.setItem('echo_notes', JSON.stringify(localNotes));
+                        speak("Note saved.");
+                    } else {
+                        awaitingNoteContent = true;
+                        speak("What is the note?");
+                    }
+                }
+                return;
+            }
+
+            if (/\b(radio|music|stream|play|listen to|watch|tv)\b/i.test(commandText)) {
+                if (/\b(stop|pause|turn off)\b/i.test(commandText)) {
+                    stopRadio();
+                    speak("Playback stopped.");
+                } else {
+                    let query = commandText.replace(/.*?(play|listen to|stream|watch|tv)\s+/i, "").trim();
+                    if(!query) query = "classic fm"; 
+                    playDynamicRadio(query);
+                }
+                return;
+            }
+
+            if (/wikipedia|wiki|search.*for|who is|what is/i.test(commandText)) {
+                let query = commandText.replace(/.*?(wikipedia|wiki|search\s+for|search|who is|what is)(\s+for|\s+about)?\s+/i, "").trim();
+                if (query) {
+                    fetchWikipediaSummary(query);
+                } else speak("What topic should I look up?");
+                return;
+            }
+
+            if (/\b(joke|funny)\b/i.test(commandText)) {
+                fetchJoke();
+                return;
+            }
+
+            if (isAddressed) {
+                speak("I didn't understand that command.");
+            }
+        }
+
+        // ==============================================================================
+        // BACKGROUND AUDIO MEDIA ENGINE
+        // ==============================================================================
+        async function playDynamicRadio(query) {
+            try {
+                speak(`Searching for ${query}...`);
+                let cleanQuery = query.replace(/\b(music|radio|station|channel|news)\b/gi, '').trim();
+                
+                const apiUrl = "https://all.api.radio-browser.info/json/stations/search?limit=5&order=clickcount&reverse=true&hidebroken=true";
+                let res = await fetch(apiUrl + "&name=" + encodeURIComponent(cleanQuery));
+                let data = await res.json();
+                
+                if (data && data.length > 0) {
+                    startRadio(data[0].url_resolved, data[0].name);
+                    speak(`Tuning into ${data[0].name}.`);
+                } else {
+                    speak(`I couldn't find an audio broadcast matching ${query}.`);
+                }
+            } catch(e) {
+                speak("I had trouble connecting to the broadcast network.");
+            }
+        }
+
+        function startRadio(url, name) {
+            stopRadio(); 
+            if (window.Hls && Hls.isSupported() && url.toLowerCase().includes('m3u8')) {
+                hlsPlayer = new Hls();
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(mainAudioPlayer);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => mainAudioPlayer.play().catch(e=>console.warn(e)));
+            } else {
+                mainAudioPlayer.src = url;
+                mainAudioPlayer.play().catch(e=>console.warn(e));
+            }
+            radioPlaying = true;
+            logTranscript(`[Playing]: ${name}`);
+        }
+
+        function stopRadio() {
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            mainAudioPlayer.pause();
+            mainAudioPlayer.removeAttribute('src');
+            mainAudioPlayer.load();
+            radioPlaying = false;
+        }
+
+        // ==============================================================================
+        // UTILITIES
+        // ==============================================================================
+        function parseDurationToSeconds(text) {
+            // Simplified duration parser
+            const hourMatch = text.match(/(\d+)\s*hour/i);
+            const minMatch = text.match(/(\d+)\s*minute/i);
+            const secMatch = text.match(/(\d+)\s*second/i);
+            let total = 0;
+            if (hourMatch) total += parseInt(hourMatch[1]) * 3600;
+            if (minMatch) total += parseInt(minMatch[1]) * 60;
+            if (secMatch) total += parseInt(secMatch[1]);
+            return total;
+        }
+
+        function startTimer(seconds) {
+            if (timerInterval) clearInterval(timerInterval);
+            timerSecondsLeft = seconds;
+            timerActive = true;
+            timerInterval = setInterval(() => {
+                if (timerSecondsLeft > 0) {
+                    timerSecondsLeft--;
+                } else {
+                    clearInterval(timerInterval);
+                    timerActive = false;
+                    document.getElementById('alarm-audio').play();
+                }
+            }, 1000);
+        }
+
+        function fetchWikipediaSummary(query) {
+            const url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(query.replace(/\s+/g, '_'));
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    const extract = data.extract || "No description found.";
+                    speak(`According to Wikipedia, ${data.title}: ${extract.split('.').slice(0, 2).join('.') + '.'}`);
+                }).catch(() => speak(`I couldn't find a Wikipedia page for ${query}.`));
+        }
+
+        async function fetchJoke() {
+            try {
+                const response = await fetch('https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit');
+                const data = await response.json();
+                if (data.type === 'twopart') speak(`${data.setup} ... ${data.delivery}`);
+                else speak(data.joke);
+            } catch (e) { speak("Why did the computer crash? It had a bad byte!"); }
+        }
+
+        async function runGoodMorningSequence() {
+            speak(`Good morning, ${userName}. Let me look up today's details...`);
+
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            
+            let weatherStr = "I'm still loading weather reports.";
+            if (currentWeatherState.temp !== null) {
+                weatherStr = `Right now in ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees with ${currentWeatherState.condition.toLowerCase()} and winds at ${currentWeatherState.wind} miles per hour. Today's forecast calls for a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}. `;
+            }
+
+            try {
+                const rssUrl = encodeURIComponent('http://feeds.bbci.co.uk/news/world/rss.xml');
+                const newsRes = await fetch("https://api.rss2json.com/v1/api.json?rss_url=" + rssUrl);
+                const newsData = await newsRes.json();
+
+                let newsStr = "I couldn't load the latest news right now.";
+                if (newsData && newsData.items && newsData.items.length >= 2) {
+                    const headline1 = newsData.items[0].title;
+                    const headline2 = newsData.items[1].title;
+                    newsStr = `Here are today's stories. First, ${headline1}. Second, ${headline2}.`;
+                }
+
+                const fullSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} ${newsStr} Have a wonderful day!`;
+                speak(fullSpeech);
+
+            } catch (e) {
+                console.warn("Morning sequence news error:", e);
+                const errorSpeech = `Good morning, ${userName}. It is currently ${timeStr}. ${weatherStr} I had trouble connecting to the news network, but I hope you have a great day!`;
+                speak(errorSpeech);
+            }
+        }
+
+        // ==============================================================================
+        // BOOT SEQUENCE
+        // ==============================================================================
+        activateBtn.addEventListener('click', () => {
+            startupContainer.classList.add('hidden');
+            activeContainer.classList.remove('hidden');
+            activeContainer.classList.add('flex');
+            
+            // Start Mic Engine
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
+                isMicActive = true;
+                systemStatus.textContent = "LISTENING";
+                if (initWebSpeech()) {
+                    try { recognition.start(); } catch(e){}
+                }
+            }).catch(err => {
+                systemStatus.textContent = "MIC BLOCKED";
+                statusIndicator.classList.replace('bg-green-500', 'bg-red-500');
+            });
+        });
+
+    </script>
+</body>
+</html>

@@ -359,7 +359,8 @@
         const peerStatusTxt = document.getElementById('peer-status-txt');
 
         // State variables
-        let wakeword = "jesse";
+        let wakeword = "jessie"; // Underlying Web Speech API trigger
+        let displayWakeword = "Jesse"; // UI Pen Name
         let trainingMode = false;
         let selectedVoiceName = "";
         let userName = localStorage.getItem('echo_user_name') || "Friend";
@@ -399,6 +400,7 @@
             city: "Locating...",
             high: null,
             low: null,
+            wind: null,
             forecastCondition: null
         };
         let userLocation = { lat: null, lon: null, city: null };
@@ -590,8 +592,7 @@
         function updateSuggestion() {
             if (currentBubbleState !== 'idle' && currentBubbleState !== 'wakeword') return;
 
-            let capitalizedWakeWord = wakeword.charAt(0).toUpperCase() + wakeword.slice(1);
-            let text = suggestions[suggestionIndex].replace(/Jesse/gi, capitalizedWakeWord);
+            let text = suggestions[suggestionIndex].replace(/Jesse/gi, displayWakeword);
             
             const suggestionSpan = document.getElementById('suggestion-text');
             if (suggestionSpan) {
@@ -773,6 +774,7 @@
 
                 currentWeatherState.temp = temp;
                 currentWeatherState.condition = condition;
+                currentWeatherState.wind = Math.round(wind);
                 
                 document.getElementById('weather-city').textContent = currentWeatherState.city;
                 document.getElementById('weather-temp').textContent = `${currentWeatherState.temp}°F`;
@@ -1000,8 +1002,8 @@
                 if (!currentText) return;
 
                 if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
-                    // WAKE WORD MODE: Highly sensitive matching regex
-                    const wakewordRegex = new RegExp(`\\b(${wakeword}|hey ${wakeword}|hi ${wakeword})`, 'i');
+                    // WAKE WORD MODE: 
+                    const wakewordRegex = new RegExp(`\\b(${wakeword}|jesse|hey ${wakeword}|hey jesse|hi ${wakeword}|hi jesse)`, 'i');
                     const match = currentText.match(wakewordRegex);
 
                     if (match) {
@@ -1266,7 +1268,7 @@
                 }
                 
                 let finalNoteContent = rawInput.trim();
-                const noteWakewordRegex = new RegExp(`^\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b\\s*`, 'i');
+                const noteWakewordRegex = new RegExp(`^\\b(${wakeword}|jesse|${wakeword}ie|${wakeword}y)\\b\\s*`, 'i');
                 finalNoteContent = finalNoteContent.replace(noteWakewordRegex, '').trim();
                 finalNoteContent = finalNoteContent.replace(/^[^a-zA-Z0-9]+/, '').trim();
                 
@@ -1301,7 +1303,7 @@
 
             let isAddressed = false;
             let commandText = cleanedInput;
-            const wakewordRegex = new RegExp(`\\b(${wakeword}|${wakeword}ie|${wakeword}y)\\b`, 'i');
+            const wakewordRegex = new RegExp(`\\b(${wakeword}|jesse|${wakeword}ie|${wakeword}y)\\b`, 'i');
             const match = cleanedInput.match(wakewordRegex);
 
             if (match) {
@@ -1381,7 +1383,7 @@
                     return;
                 }
                 if (currentWeatherState.temp !== null) {
-                    speak(`The weather in ${currentWeatherState.city} is ${currentWeatherState.temp} degrees Fahrenheit and ${currentWeatherState.condition}.`);
+                    speak(`Right now in ${currentWeatherState.city}, it's ${currentWeatherState.temp} degrees Fahrenheit with ${currentWeatherState.condition.toLowerCase()} and winds at ${currentWeatherState.wind} miles per hour. Today's forecast calls for a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}.`);
                 } else {
                     speak("I am still trying to pinpoint your location and load the weather data. Please try again in a moment.");
                 }
@@ -1763,10 +1765,7 @@
             
             let weatherStr = "I'm still loading weather reports.";
             if (currentWeatherState.temp !== null) {
-                weatherStr = `In ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees and ${currentWeatherState.condition}. `;
-                if (currentWeatherState.high !== null) {
-                    weatherStr += `Today's outlook calls for ${currentWeatherState.forecastCondition.toLowerCase()}, with a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}. `;
-                }
+                weatherStr = `Right now in ${currentWeatherState.city}, it is ${currentWeatherState.temp} degrees with ${currentWeatherState.condition.toLowerCase()} and winds at ${currentWeatherState.wind} miles per hour. Today's forecast calls for a high of ${currentWeatherState.high} and a low of ${currentWeatherState.low}. `;
             }
             
             let calendarStr = "";
