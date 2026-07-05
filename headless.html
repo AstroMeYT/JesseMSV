@@ -18,8 +18,18 @@
             <svg class="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
         </div>
         <h1 class="text-2xl font-bold tracking-widest text-gray-200 mb-2">JESSIE</h1>
-        <p class="text-sm text-gray-500 mb-8 max-w-xs">Background Audio Engine</p>
+        <p class="text-sm text-gray-500 mb-6 max-w-xs">Background Audio Engine</p>
         
+        <div class="mb-4 w-full max-w-xs text-left">
+            <label class="block text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-semibold">API Endpoint / Base URL</label>
+            <input type="text" id="headless-llm-url" placeholder="https://ollama.com/api/chat" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500 transition-all text-center">
+        </div>
+
+        <div class="mb-6 w-full max-w-xs text-left">
+            <label class="block text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-semibold">Cloud AI API Key (Optional)</label>
+            <input type="password" id="headless-llm-key" placeholder="Ollama key for gpt-oss:20b-cloud" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500 transition-all text-center placeholder-gray-600">
+        </div>
+
         <button id="activate-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all active:scale-95 tracking-widest uppercase">
             Initialize Engine
         </button>
@@ -51,7 +61,7 @@
         let radioPlaying = false;
         let hlsPlayer = null; 
         let isAssistantSpeaking = false; 
-        let currentVolume = 0.5;
+        let currentVolume = 1.0;
 
         // Helper to control Raspberry Pi GPIO LED visually
         function setAssistantLed(action) {
@@ -72,9 +82,9 @@
         const systemStatus = document.getElementById('system-status');
         const transcriptLog = document.getElementById('transcript-log');
         const mainAudioPlayer = document.getElementById('main-audio-player');
+        const headlessLlmKey = document.getElementById('headless-llm-key');
+        const headlessLlmUrl = document.getElementById('headless-llm-url');
 
-        // ==============================================================================
-        // WEATHER ENGINE
         // ==============================================================================
         const WEATHER_CODES = {
             0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
@@ -329,7 +339,7 @@
                 let match = parsedCmd.match(/\bvolume\s+(\d+)\b/i);
                 if (match) {
                     let level = parseInt(match[1], 10);
-                    level = Math.max(0, Math.min(10, level)); // Clamp between 0 and 10
+                    level = Math.max(0, Math.min(10, level)); 
                     setSystemVolume(level);
                 }
                 return;
@@ -347,7 +357,6 @@
                 const match = commandText.match(/\b(my name is|call me|set my name to|i am)\s+(.+)/i);
                 if (match && match[2]) {
                     let newName = match[2].trim();
-                    // Capitalize the first letter for a proper greeting
                     newName = newName.charAt(0).toUpperCase() + newName.slice(1);
                     userName = newName;
                     localStorage.setItem('echo_user_name', userName);
@@ -383,9 +392,7 @@
                 
                 if (seconds > 0) {
                     let reminderText = numText.replace(/\b(remind me|set a reminder)\b/ig, '');
-                    // Strip the duration phrase dynamically using regex (e.g., "in 45 minutes", "and 30 seconds")
                     reminderText = reminderText.replace(/\b(in|for|after|and)\s+\d+\s+(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/ig, '');
-                    // Clean up leading grammar so the payload is pure (e.g., "to feed the dog" -> "feed the dog")
                     reminderText = reminderText.replace(/^\s*(to|that|about)\s+/i, '').trim();
                     
                     if (reminderText) {
@@ -466,7 +473,15 @@
             if (/wikipedia|wiki|search.*for|who is|what is/i.test(commandText)) {
                 let query = commandText.replace(/.*?(wikipedia|wiki|search\s+for|search|who is|what is)(\s+for|\s+about)?\s+/i, "").trim();
                 if (query) {
-                    fetchWikipediaSummary(query);
+                    const llmKey = localStorage.getItem('llm_api_key');
+                    if (llmKey) {
+                        systemStatus.textContent = "ASKING CLOUD AI...";
+                        askCloudLLM(commandText, llmKey).then(answer => {
+                            speak(answer);
+                        });
+                    } else {
+                        fetchWikipediaSummary(query);
+                    }
                 } else speak("What topic should I look up?");
                 return;
             }
@@ -477,7 +492,56 @@
             }
 
             if (isAddressed) {
-                speak("I didn't understand that command.");
+                const llmKey = localStorage.getItem('llm_api_key');
+                if (llmKey) {
+                    systemStatus.textContent = "ASKING CLOUD AI...";
+                    askCloudLLM(commandText, llmKey).then(answer => {
+                        speak(answer);
+                    });
+                    return;
+                } else {
+                    speak("I didn't understand that command.");
+                }
+            }
+        }
+
+        async function askCloudLLM(query, apiKey) {
+            try {
+                // Point directly to standard native Ollama chat endpoint by default
+                const baseUrl = localStorage.getItem('llm_base_url') || "https://ollama.com/api/chat";
+                const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+                const endpoint = cleanBaseUrl.endsWith("/api/chat") ? cleanBaseUrl : `${cleanBaseUrl}/api/chat`;
+
+                logTranscript(`[API Request] Connecting to cloud...`);
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: "gpt-oss:20b-cloud",
+                        messages: [
+                            { role: "system", content: "You are Jessie, a helpful voice assistant. Keep answers brief (1 to 3 sentences) and highly conversational. Do not use markdown or formatting." },
+                            { role: "user", content: query }
+                        ],
+                        stream: false
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => "");
+                    throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
+                }
+                const data = await response.json();
+                
+                // Support both native Ollama response structure and OpenAI compatible backup structure
+                const responseText = data.message?.content || data.choices?.[0]?.message?.content || "";
+                return responseText.trim();
+            } catch (e) {
+                console.warn("LLM API Error:", e);
+                logTranscript(`[API Fail] ${e.message || e}`);
+                return "I couldn't reach my cloud brain. Please check your local logs and connection settings.";
             }
         }
 
@@ -533,7 +597,6 @@
         // UTILITIES
         // ==============================================================================
         function parseDurationToSeconds(text) {
-            // Simplified duration parser
             const hourMatch = text.match(/(\d+)\s*hour/i);
             const minMatch = text.match(/(\d+)\s*minute/i);
             const secMatch = text.match(/(\d+)\s*second/i);
@@ -542,6 +605,40 @@
             if (minMatch) total += parseInt(minMatch[1]) * 60;
             if (secMatch) total += parseInt(secMatch[1]);
             return total;
+        }
+
+        // Helper to convert word numbers to digits
+        function parseEnglishNumbers(text) {
+            const words = text.toLowerCase().replace(/-/g, " ").split(/\s+/);
+            const resultWords = [];
+            let i = 0;
+            const wordToNumMap = {
+                "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, 
+                "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, 
+                "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, 
+                "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, 
+                "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, 
+                "hundred": 100
+            };
+            while (i < words.length) {
+                const word = words[i];
+                if (["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].includes(word) && i + 1 < words.length) {
+                    const nextWord = words[i + 1];
+                    if (["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"].includes(nextWord)) {
+                        const val = wordToNumMap[word] + wordToNumMap[nextWord];
+                        resultWords.push(val.toString());
+                        i += 2;
+                        continue;
+                    }
+                }
+                if (wordToNumMap[word] !== undefined) {
+                    resultWords.push(wordToNumMap[word].toString());
+                } else {
+                    resultWords.push(word);
+                }
+                i++;
+            }
+            return resultWords.join(" ");
         }
 
         function startTimer(seconds) {
@@ -614,9 +711,11 @@
         // ==============================================================================
         // BOOT SEQUENCE
         // ==============================================================================
-        
         function initializeSystem() {
             if (isMicActive) return; // Prevent double boot
+
+            localStorage.setItem('llm_api_key', headlessLlmKey.value.trim());
+            localStorage.setItem('llm_base_url', headlessLlmUrl.value.trim());
 
             startupContainer.classList.add('hidden');
             activeContainer.classList.remove('hidden');
@@ -638,8 +737,18 @@
         // Manual trigger
         activateBtn.addEventListener('click', initializeSystem);
 
+        headlessLlmKey.value = localStorage.getItem('llm_api_key') || "";
+        headlessLlmUrl.value = localStorage.getItem('llm_base_url') || "https://ollama.com/api/chat";
+
+        headlessLlmKey.addEventListener('change', () => {
+            localStorage.setItem('llm_api_key', headlessLlmKey.value.trim());
+        });
+        headlessLlmUrl.addEventListener('change', () => {
+            localStorage.setItem('llm_base_url', headlessLlmUrl.value.trim());
+        });
+
         // Set default volume on startup
-        setSystemVolume(5);
+        setSystemVolume(10);
 
         // Auto-Initialize Mic if Permissions are Already Granted
         if (navigator.permissions && navigator.permissions.query) {

@@ -313,6 +313,16 @@
                         </select>
                         <button id="apply-voice-btn" class="w-full bg-white/10 hover:bg-white/20 text-white border border-white/10 text-[10px] font-bold py-2 rounded-lg transition-all uppercase tracking-wider">Apply Voice</button>
                     </div>
+
+                    <div class="bg-white/5 rounded-xl p-3 border border-white/5 flex flex-col gap-2">
+                        <div class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">Cloud AI Fallback</div>
+                        <p class="text-[9px] text-gray-400 leading-normal mb-1">Enter API Endpoint & Key for gpt-oss:20b-cloud.</p>
+                        <div class="flex flex-col gap-2">
+                            <input type="text" id="llm-url-input" placeholder="https://ollama.com/api/chat" class="w-full bg-black border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-cyan-400 transition-all">
+                            <input type="password" id="llm-key-input" placeholder="API Key" class="w-full bg-black border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-cyan-400 transition-all">
+                            <button id="save-llm-btn" class="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-[10px] py-2 rounded-lg transition-all uppercase tracking-wider">Save Configuration</button>
+                        </div>
+                    </div>
                 </div>
 
             </div>
@@ -357,6 +367,9 @@
         const closeQrBtn = document.getElementById('close-qr-btn');
         const showQrBtn = document.getElementById('show-qr-btn');
         const peerStatusTxt = document.getElementById('peer-status-txt');
+        const llmKeyInput = document.getElementById('llm-key-input');
+        const llmUrlInput = document.getElementById('llm-url-input');
+        const saveLlmBtn = document.getElementById('save-llm-btn');
 
         // State variables
         let wakeword = "jessie"; // Underlying Web Speech API trigger
@@ -379,7 +392,14 @@
         let isSleepMode = false;
         let isAssistantSpeaking = false; 
         let speechSafetyTimeout = null; // Watchdog watchdog for TTS stuck state
-        let currentVolume = 0.5;
+        let currentVolume = 1.0;
+
+        // Helper to control Raspberry Pi GPIO LED visually
+        function setAssistantLed(action) {
+            const gpioServerUrl = "http://127.0.0.1:5001"; 
+            return fetch(`${gpioServerUrl}/led/${action}`)
+                .catch(err => console.warn("GPIO server offline or unreachable"));
+        }
 
         // Contextual Suggestions Rotation logic
         const suggestions = [
@@ -453,7 +473,6 @@
         }
 
         function initPeerJS() {
-            // Provide explicit Google STUN servers to ensure WebRTC can puncture local firewalls
             peer = new Peer({
                 config: {
                     'iceServers': [
@@ -872,8 +891,7 @@
             // Clear any active safety watchdog timers
             if (speechSafetyTimeout) clearTimeout(speechSafetyTimeout);
             
-            // Safety release valve: Speech Synthesis can silently freeze on browsers,
-            // permanently locking up the microphone. This forces a release after 12 seconds max.
+            // Safety release valve
             speechSafetyTimeout = setTimeout(() => {
                 if (isAssistantSpeaking) {
                     isAssistantSpeaking = false;
@@ -919,7 +937,7 @@
 
         applyVoiceBtn.addEventListener('click', () => {
             selectedVoiceName = voiceSelect.value;
-            speak("Voice configuration updated. How do I sound now?");
+            speak("Voice configuration updated. How do I sound?");
         });
 
         userNameInput.value = userName === "Friend" ? "" : userName;
@@ -932,10 +950,17 @@
             }
         });
 
+        llmKeyInput.value = localStorage.getItem('llm_api_key') || "";
+        llmUrlInput.value = localStorage.getItem('llm_base_url') || "https://ollama.com/api/chat";
+        saveLlmBtn.addEventListener('click', () => {
+            localStorage.setItem('llm_api_key', llmKeyInput.value.trim());
+            localStorage.setItem('llm_base_url', llmUrlInput.value.trim());
+            speak("Cloud A I configuration updated.");
+        });
+
         // ==============================================================================
         // PURE NATIVE WEB SPEECH ENGINE (Wake Word & Command STT)
         // ==============================================================================
-        
         let isMicActive = false;
         let isCommandCapture = false; 
         
@@ -997,7 +1022,6 @@
             let isChiming = false;
 
             recognition.onresult = async (event) => {
-                // Instantly block speech captures while the assistant speaks, plays chime, or is processing
                 if (isAssistantSpeaking || !isMicActive || isChiming) return;
 
                 let interimTranscript = '';
@@ -1015,7 +1039,6 @@
                 if (!currentText) return;
 
                 if (!isCommandCapture && !awaitingCommand && !awaitingNoteContent) {
-                    // WAKE WORD MODE: 
                     const wakewordRegex = new RegExp(`\\b(${wakeword}|jesse|hey ${wakeword}|hey jesse|hi ${wakeword}|hi jesse)`, 'i');
                     const match = currentText.match(wakewordRegex);
 
@@ -1024,20 +1047,16 @@
                         const textAfterWakeword = currentText.substring(match.index + match[0].length).trim();
                         
                         if (finalTranscript && textAfterWakeword.length > 2) {
-                            // User spoke everything in one breath (e.g., "Jesse what time is it")
                             await playWakeChime();
                             isChiming = false;
                             processTranscript(finalTranscript, "Native Speech");
                         } else {
-                            // User just said "Jesse", abort mic loop to flush the noise buffer
                             try { recognition.abort(); } catch(e){}
-                            
                             await playWakeChime();
-                            
                             isChiming = false;
                             triggerCommandCapture();
+                            setAssistantLed("flash");
                             
-                            // Restart fresh capture session
                             setTimeout(() => {
                                 if (isMicActive) {
                                     try { recognition.start(); } catch(e){}
@@ -1046,11 +1065,11 @@
                         }
                     }
                 } else {
-                    // COMMAND CAPTURE MODE
                     setBubbleState('listening', currentText);
                     
                     if (finalTranscript) {
                         isCommandCapture = false;
+                        setAssistantLed("off");
                         setBubbleState('processing');
                         processTranscript(finalTranscript, "Native Speech");
                     }
@@ -1061,20 +1080,13 @@
                 console.warn("Speech recognition error:", event.error);
                 appendLog(`[Speech Recognition Error] ${event.error}`);
 
-                // If error is related to silence/microphone pause, do not crash.
-                // Reset states and prepare to restart engine gracefully.
-                if (event.error === 'no-speech' || event.error === 'aborted') {
-                    // Silent retry logic handled elegantly by onend
-                } else if (event.error === 'not-allowed') {
-                    appendLog("[Critical] Permission Denied for microphone access.");
-                    stopMicSystem();
-                    setBubbleState('info', "Microphone blocked. Check browser address bar permissions!");
+                if (isCommandCapture && (event.error === 'no-speech' || event.error === 'aborted')) {
+                    isCommandCapture = false;
+                    setAssistantLed("off");
                 }
             };
 
             recognition.onend = () => {
-                // If microphone is active and not playing chime, restart Web Speech API safely.
-                // Wrapped in small timeout to prevent browser start collisions.
                 if (isMicActive && !isChiming) {
                     setTimeout(() => {
                         if (isMicActive) {
@@ -1089,7 +1101,6 @@
 
         function triggerCommandCapture() {
             isCommandCapture = true;
-            
             requestAnimationFrame(() => {
                 setMicState('listening', 'RECORDING');
                 setBubbleState('listening');
@@ -1099,7 +1110,6 @@
         function startMicSystem() {
             setMicState('init', 'INITIALIZING...');
 
-            // SECURE CONTEXT GUARD: Inform user if running in an insecure non-HTTPS or non-localhost context.
             if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
                 appendLog("[Insecure Context Warn] Web Speech API strictly requires HTTPS on mobile devices.");
                 setBubbleState('info', "Insecure Context! Please host over HTTPS to enable Web Speech API on phone.");
@@ -1166,10 +1176,10 @@
             if (!isMicActive) {
                 startMicSystem();
             } else if (!isCommandCapture) {
-                // Allows user to manually bypass the wake word (Push to Talk)
                 try { recognition.abort(); } catch(e){}
                 await playWakeChime();
                 triggerCommandCapture();
+                setAssistantLed("flash");
                 setTimeout(() => {
                     if (isMicActive) {
                         try { recognition.start(); } catch(e){}
@@ -1181,92 +1191,7 @@
         });
 
         // ==============================================================================
-        // NLP & PARSING ALGORITHMS
-        // ==============================================================================
-        function parseEnglishNumbers(text) {
-            const words = text.toLowerCase().replace(/-/g, " ").split(/\s+/);
-            const resultWords = [];
-            let i = 0;
-            while (i < words.length) {
-                const word = words[i];
-                if (["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].includes(word) && i + 1 < words.length) {
-                    const nextWord = words[i + 1];
-                    if (["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"].includes(nextWord)) {
-                        const val = WORD_TO_NUM[word] + WORD_TO_NUM[nextWord];
-                        resultWords.push(val.toString());
-                        i += 2;
-                        continue;
-                    }
-                }
-                if (WORD_TO_NUM[word] !== undefined) {
-                    resultWords.push(WORD_TO_NUM[word].toString());
-                } else {
-                    resultWords.push(word);
-                }
-                i++;
-            }
-            return resultWords.join(" ");
-        }
-
-        function parseDurationToSeconds(text) {
-            const normalized = parseEnglishNumbers(text);
-            const hourPattern = /(\d+)\s*(?:hour|hr|h|hours)/i;
-            const minPattern = /(\d+)\s*(?:minute|min|m|inutes)/i;
-            const secPattern = /(\d+)\s*(?:second|sec|s|econds)/i;
-
-            let hours = 0, minutes = 0, seconds = 0;
-
-            const hMatch = normalized.match(hourPattern);
-            const mMatch = normalized.match(minPattern);
-            const sMatch = normalized.match(secPattern);
-
-            if (hMatch) hours = parseInt(hMatch[1]);
-            if (mMatch) minutes = parseInt(mMatch[1]);
-            if (sMatch) seconds = parseInt(sMatch[1]);
-
-            if (!hMatch && !mMatch && !sMatch) {
-                const digits = normalized.match(/\d+/g);
-                if (digits && digits.length === 1) {
-                    seconds = parseInt(digits[0]);
-                }
-            }
-
-            return (hours * 3600) + (minutes * 60) + seconds;
-        }
-
-        function calculateEquation(text) {
-            let cleaned = text.toLowerCase().replace(/calculate|what is|solve/gi, "").trim();
-            cleaned = parseEnglishNumbers(cleaned);
-
-            const operators = {
-                "plus": "+",
-                "minus": "-",
-                "multiplied by": "*",
-                "multiply": "*",
-                "times": "*",
-                "divided by": "/",
-                "divide": "/",
-                "over": "/",
-                "x": "*"
-            };
-
-            for (const [word, op] of Object.entries(operators)) {
-                cleaned = cleaned.replace(new RegExp(word, 'g'), op);
-            }
-
-            cleaned = cleaned.replace(/[^0-9\+\-\*\/\(\)\s\.]/g, '');
-
-            try {
-                if (!cleaned.trim()) throw new Error("No expression parsed");
-                const result = Function(`"use strict"; return (${cleaned})`)();
-                return { expression: cleaned, result };
-            } catch (e) {
-                return { expression: cleaned, result: null };
-            }
-        }
-
-        // ==============================================================================
-        // CORE SKILLS ROUTER (Enhanced Leniency)
+        // CORE SKILLS ROUTER
         // ==============================================================================
         function handleCommand(rawInput) {
             let cleanedInput = rawInput.toLowerCase().trim();
@@ -1348,9 +1273,18 @@
                 let match = parsedCmd.match(/\bvolume\s+(\d+)\b/i);
                 if (match) {
                     let level = parseInt(match[1], 10);
-                    level = Math.max(0, Math.min(10, level)); // Clamp between 0 and 10
+                    level = Math.max(0, Math.min(10, level)); 
                     setSystemVolume(level);
                 }
+                resetUIState();
+                return;
+            }
+
+            if (/\b(turn on|turn off|turn)\b.*\b(light|led|lights)\b/i.test(cleanCmd)) {
+                const action = /\bon\b/i.test(cleanCmd) ? "on" : "off";
+                setAssistantLed(action).then(res => {
+                    if (res && res.ok) speak(`Turning the light ${action}.`);
+                });
                 resetUIState();
                 return;
             }
@@ -1443,17 +1377,6 @@
                 return;
             }
 
-            if (/\b(calculate|plus|minus|times|divided|what is.*plus)\b/i.test(cleanCmd)) {
-                const calc = calculateEquation(commandText);
-                if (calc.result !== null) {
-                    speak(`The equation equals ${calc.result}`);
-                } else {
-                    speak("Sorry, I couldn't evaluate that math equation. Try: calculate 5 plus two.");
-                }
-                resetUIState();
-                return;
-            }
-
             if (/\b(timer|second|minute|hour)\b/i.test(cleanCmd)) {
                 if (!assistantPermissions.allowTimers) {
                     speak("Timers are currently disabled in your manager app.");
@@ -1479,9 +1402,7 @@
                 
                 if (seconds > 0) {
                     let reminderText = numText.replace(/\b(remind me|set a reminder)\b/ig, '');
-                    // Strip the duration phrase dynamically using regex
                     reminderText = reminderText.replace(/\b(in|for|after|and)\s+\d+\s+(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/ig, '');
-                    // Clean up leading grammar so the payload is pure (e.g., "to feed the dog" -> "feed the dog")
                     reminderText = reminderText.replace(/^\s*(to|that|about)\s+/i, '').trim();
                     
                     if (reminderText) {
@@ -1598,7 +1519,17 @@
                 let query = cleanCmd.replace(/.*?(wikipedia|wiki|search\s+for|search|tell me about|who is|what is)(\s+for|\s+on|\s+about)?\s+/i, "").trim();
                 
                 if (query) {
-                    fetchWikipediaSummary(query);
+                    const llmKey = localStorage.getItem('llm_api_key');
+                    if (llmKey) {
+                        setBubbleState('processing', 'Asking Cloud AI...');
+                        askCloudLLM(commandText, llmKey).then(answer => {
+                            speak(answer);
+                            resetUIState();
+                        });
+                        return; 
+                    } else {
+                        fetchWikipediaSummary(query);
+                    }
                 } else {
                     speak("What topic would you like me to look up?");
                 }
@@ -1627,10 +1558,57 @@
             }
 
             if (isAddressed) {
-                speak("I heard you, but I didn't recognize that specific command. Try asking about weather, timers, math, radio, or notes.");
+                const llmKey = localStorage.getItem('llm_api_key');
+                if (llmKey) {
+                    setBubbleState('processing', 'Asking Cloud AI...');
+                    askCloudLLM(commandText, llmKey).then(answer => {
+                        speak(answer);
+                        resetUIState();
+                    });
+                    return; 
+                } else {
+                    speak("I heard you, but I didn't recognize that specific command. Try asking about weather, timers, math, radio, or notes.");
+                }
             }
             
             resetUIState();
+        }
+
+        async function askCloudLLM(query, apiKey) {
+            try {
+                const baseUrl = localStorage.getItem('llm_base_url') || "https://ollama.com/api/chat";
+                const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+                const endpoint = cleanBaseUrl.endsWith("/api/chat") ? cleanBaseUrl : `${cleanBaseUrl}/api/chat`;
+
+                appendLog(`[API Request] Connecting to cloud...`);
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: "gpt-oss:20b-cloud",
+                        messages: [
+                            { role: "system", content: "You are Jessie, a helpful voice assistant. Keep answers brief (1 to 3 sentences) and highly conversational. Do not use markdown or formatting." },
+                            { role: "user", content: query }
+                        ],
+                        stream: false
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => "");
+                    throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
+                }
+                const data = await response.json();
+                const responseText = data.message?.content || data.choices?.[0]?.message?.content || "";
+                return responseText.trim();
+            } catch (e) {
+                console.warn("LLM API Error:", e);
+                appendLog(`[API Fail] ${e.message || e}`);
+                return "I couldn't reach my cloud brain. Please check your local logs and connection settings.";
+            }
         }
 
         // ==============================================================================
@@ -1851,6 +1829,17 @@
         // ==============================================================================
         // WIKIPEDIA, JOKES, TIMERS, & UI UTILITIES
         // ==============================================================================
+        function parseDurationToSeconds(text) {
+            const hourMatch = text.match(/(\d+)\s*hour/i);
+            const minMatch = text.match(/(\d+)\s*minute/i);
+            const secMatch = text.match(/(\d+)\s*second/i);
+            let total = 0;
+            if (hourMatch) total += parseInt(hourMatch[1]) * 3600;
+            if (minMatch) total += parseInt(minMatch[1]) * 60;
+            if (secMatch) total += parseInt(secMatch[1]);
+            return total;
+        }
+
         async function runGoodMorningSequence() {
             speak(`Good morning, ${userName}. Let me look up today's headlines...`);
 
@@ -2126,7 +2115,7 @@
         }
 
         // Set default volume on startup
-        setSystemVolume(5);
+        setSystemVolume(10);
 
         // Initialize UI State
         setBubbleState('idle'); 
