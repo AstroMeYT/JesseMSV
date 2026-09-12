@@ -51,29 +51,32 @@
   <!-- Fullscreen Edge Glow Overlay (Activates on Wake Word "Jessie") -->
   <div id="glowOverlay" class="fixed inset-0 pointer-events-none transition-opacity duration-700 opacity-0 inward-purple-glow z-40"></div>
 
-  <main id="mainContainer" class="relative z-10 flex flex-col items-center justify-center text-center px-4 w-full h-full cursor-pointer" onclick="handleContainerClick()">
+  <main id="mainContainer" class="relative z-10 flex flex-col items-center justify-center text-center px-4 w-full h-full cursor-pointer overflow-hidden" onclick="handleContainerClick()">
     
-    <!-- Weather Widget Header (Marshall, IL) -->
-    <div class="flex flex-col items-center gap-1.5 text-sm sm:text-lg md:text-xl font-medium text-slate-400 mb-4 tracking-wide">
-      <div class="flex items-center gap-2 sm:gap-3">
-        <span id="weatherLocation" class="flex items-center gap-1.5 text-slate-400">
-          <i class="fas fa-location-dot text-purple-400"></i> Marshall, IL
-        </span>
-        <span class="text-slate-600">•</span>
-        <span id="weatherDisplay" class="flex items-center gap-2 text-slate-200">
-          <i id="weatherIcon" class="fas fa-sun text-amber-400"></i> Loading weather...
-        </span>
+    <!-- Centered Main Hero Content (Weather, Clock, Date) -->
+    <div class="flex flex-col items-center justify-center my-auto z-10 transform -translate-y-2 sm:-translate-y-4">
+      <!-- Weather Widget Header (Marshall, IL) -->
+      <div class="flex flex-col items-center gap-1.5 text-sm sm:text-lg md:text-xl font-medium text-slate-400 mb-3 tracking-wide">
+        <div class="flex items-center gap-2 sm:gap-3">
+          <span id="weatherLocation" class="flex items-center gap-1.5 text-slate-400">
+            <i class="fas fa-location-dot text-purple-400"></i> Marshall, IL
+          </span>
+          <span class="text-slate-600">•</span>
+          <span id="weatherDisplay" class="flex items-center gap-2 text-slate-200">
+            <i id="weatherIcon" class="fas fa-sun text-amber-400"></i> Loading weather...
+          </span>
+        </div>
       </div>
-    </div>
 
-    <!-- 12-Hour Digital Clock (Archivo Font, No Seconds) -->
-    <div id="clockDisplay" class="font-clock text-7xl sm:text-9xl md:text-[10rem] lg:text-[12rem] font-extrabold tracking-tight text-white my-1 leading-none drop-shadow-[0_0_35px_rgba(168,85,247,0.2)]">
-      <span id="clockTime">12:00</span> <span id="ampmDisplay" class="text-2xl sm:text-4xl md:text-5xl text-purple-400 font-normal tracking-normal ml-1 sm:ml-2">AM</span>
-    </div>
+      <!-- 12-Hour Digital Clock (Archivo Font, No Seconds) -->
+      <div id="clockDisplay" class="font-clock text-7xl sm:text-9xl md:text-[10rem] lg:text-[12rem] font-extrabold tracking-tight text-white my-1 leading-none drop-shadow-[0_0_35px_rgba(168,85,247,0.2)] select-none">
+        <span id="clockTime">12:00</span> <span id="ampmDisplay" class="text-2xl sm:text-4xl md:text-5xl text-purple-400 font-normal tracking-normal ml-1 sm:ml-2">AM</span>
+      </div>
 
-    <!-- Date Display -->
-    <div id="dateDisplay" class="text-base sm:text-xl md:text-2xl font-medium text-purple-300/90 tracking-widest uppercase mt-4">
-      Loading date...
+      <!-- Date Display -->
+      <div id="dateDisplay" class="text-base sm:text-xl md:text-2xl font-medium text-purple-300/90 tracking-widest uppercase mt-3">
+        Loading date...
+      </div>
     </div>
 
     <!-- Fullscreen Live Video Stream Modal Container -->
@@ -105,42 +108,47 @@
       </div>
     </div>
 
-    <!-- Radio Playing Indicator Banner -->
-    <div id="radioBanner" class="mt-6 transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-3 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
-      <div class="flex items-center gap-2.5">
-        <i class="fas fa-radio text-purple-400 animate-pulse"></i>
-        <span id="radioStationTitle">Playing Radio</span>
-        <button onclick="event.stopPropagation(); stopRadio();" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Stop Radio">
-          <i class="fas fa-circle-stop text-red-400 text-base"></i>
-        </button>
+    <!-- Floating Bottom Container for Widgets & Status Bars -->
+    <div class="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center justify-end gap-3 w-full max-w-xl px-4 pointer-events-none z-30">
+      
+      <!-- Radio Playing Indicator Banner -->
+      <div id="radioBanner" class="pointer-events-auto transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-3 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
+        <div class="flex items-center gap-2.5">
+          <i class="fas fa-radio text-purple-400 animate-pulse"></i>
+          <span id="radioStationTitle">Playing Radio</span>
+          <button onclick="event.stopPropagation(); stopRadio();" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Stop Radio">
+            <i class="fas fa-circle-stop text-red-400 text-base"></i>
+          </button>
+        </div>
+        <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 mt-1">
+          <button onclick="event.stopPropagation(); playRadioStation('klove');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">K-LOVE</button>
+          <button onclick="event.stopPropagation(); playRadioStation('npr');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">NPR</button>
+          <button onclick="event.stopPropagation(); playRadioStation('groove salad');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
+          <button onclick="event.stopPropagation(); promptCustomUrl();" class="px-2.5 py-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors"><i class="fas fa-plus text-[10px] mr-1"></i> Custom Stream</button>
+        </div>
       </div>
-      <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 mt-1">
-        <button onclick="event.stopPropagation(); playRadioStation('klove');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">K-LOVE</button>
-        <button onclick="event.stopPropagation(); playRadioStation('npr');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">NPR</button>
-        <button onclick="event.stopPropagation(); playRadioStation('groove salad');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
-        <button onclick="event.stopPropagation(); promptCustomUrl();" class="px-2.5 py-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors"><i class="fas fa-plus text-[10px] mr-1"></i> Custom Stream</button>
-      </div>
-    </div>
 
-    <!-- Active Timer Display Widget -->
-    <div id="timerBanner" class="mt-4 transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-2.5 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
-      <div class="flex items-center gap-3">
-        <i class="fas fa-hourglass-half text-purple-400 animate-pulse"></i>
-        <span>Timer: <strong id="timerCountdown" class="text-white font-mono text-sm sm:text-base ml-1">00:00</strong></span>
-        <button onclick="event.stopPropagation(); cancelTimer(true);" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Cancel Timer">
-          <i class="fas fa-circle-xmark text-red-400 text-base"></i>
-        </button>
+      <!-- Active Timer Display Widget -->
+      <div id="timerBanner" class="pointer-events-auto transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-2.5 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
+        <div class="flex items-center gap-3">
+          <i class="fas fa-hourglass-half text-purple-400 animate-pulse"></i>
+          <span>Timer: <strong id="timerCountdown" class="text-white font-mono text-sm sm:text-base ml-1">00:00</strong></span>
+          <button onclick="event.stopPropagation(); cancelTimer(true);" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Cancel Timer">
+            <i class="fas fa-circle-xmark text-red-400 text-base"></i>
+          </button>
+        </div>
       </div>
-    </div>
 
-    <!-- Speech Feedback Banner -->
-    <div id="speechStatus" class="mt-8 transition-all duration-500 opacity-0 transform translate-y-2 flex items-center gap-3 bg-purple-950/40 border border-purple-800/40 px-6 py-2.5 rounded-full text-purple-200 text-sm sm:text-base font-medium backdrop-blur-md">
-      <i id="statusIcon" class="fas fa-microphone text-purple-400 animate-pulse"></i>
-      <span id="statusText">Listening...</span>
+      <!-- Speech Feedback Banner -->
+      <div id="speechStatus" class="pointer-events-auto transition-all duration-500 opacity-0 transform translate-y-2 flex items-center gap-3 bg-purple-950/40 border border-purple-800/40 px-6 py-2.5 rounded-full text-purple-200 text-sm sm:text-base font-medium backdrop-blur-md">
+        <i id="statusIcon" class="fas fa-microphone text-purple-400 animate-pulse"></i>
+        <span id="statusText">Listening...</span>
+      </div>
+
     </div>
 
     <!-- Closed Captions On-Screen Subtitle Display Overlay (Off by default) -->
-    <div id="liveSubtitleOverlay" class="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-3xl w-[90%] bg-black/90 border border-purple-500/50 text-amber-300 font-semibold text-lg sm:text-2xl px-6 py-3.5 rounded-2xl text-center shadow-2xl backdrop-blur-md transition-all duration-300 opacity-0 pointer-events-none z-50">
+    <div id="liveSubtitleOverlay" class="fixed bottom-24 left-1/2 -translate-x-1/2 max-w-3xl w-[90%] bg-black/90 border border-purple-500/50 text-amber-300 font-semibold text-lg sm:text-2xl px-6 py-3.5 rounded-2xl text-center shadow-2xl backdrop-blur-md transition-all duration-300 opacity-0 pointer-events-none z-50">
       <span id="liveSubtitleText"></span>
     </div>
 
