@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jessie Voice Assistant</title>
+
+  <!-- Google Fonts: Archivo & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            clock: ['Archivo', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- HLS.js Engine for Live Video Streaming -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <style>
+    .inward-purple-glow {
+      box-shadow: inset 0 0 45px 12px rgba(168, 85, 247, 0.35), inset 0 0 18px 4px rgba(192, 132, 252, 0.25);
+    }
+
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 0.85; }
+      50% { opacity: 1; transform: scale(1.02); }
+    }
+    .pulse-subtle {
+      animation: pulse-subtle 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+
+<body class="h-full font-sans antialiased bg-black text-slate-100 flex items-center justify-center m-0 p-0 overflow-hidden select-none">
+
+  <!-- Fullscreen Edge Glow Overlay (Activates on Wake Word "Jessie") -->
+  <div id="glowOverlay" class="fixed inset-0 pointer-events-none transition-opacity duration-700 opacity-0 inward-purple-glow z-40"></div>
+
+  <main id="mainContainer" class="relative z-10 flex flex-col items-center justify-center text-center px-4 w-full h-full cursor-pointer" onclick="handleContainerClick()">
+    
+    <!-- Weather Widget Header (Marshall, IL) -->
+    <div class="flex flex-col items-center gap-1.5 text-sm sm:text-lg md:text-xl font-medium text-slate-400 mb-4 tracking-wide">
+      <div class="flex items-center gap-2 sm:gap-3">
+        <span id="weatherLocation" class="flex items-center gap-1.5 text-slate-400">
+          <i class="fas fa-location-dot text-purple-400"></i> Marshall, IL
+        </span>
+        <span class="text-slate-600">•</span>
+        <span id="weatherDisplay" class="flex items-center gap-2 text-slate-200">
+          <i id="weatherIcon" class="fas fa-sun text-amber-400"></i> Loading weather...
+        </span>
+      </div>
+    </div>
+
+    <!-- 12-Hour Digital Clock (Archivo Font, No Seconds) -->
+    <div id="clockDisplay" class="font-clock text-7xl sm:text-9xl md:text-[10rem] lg:text-[12rem] font-extrabold tracking-tight text-white my-1 leading-none drop-shadow-[0_0_35px_rgba(168,85,247,0.2)]">
+      <span id="clockTime">12:00</span> <span id="ampmDisplay" class="text-2xl sm:text-4xl md:text-5xl text-purple-400 font-normal tracking-normal ml-1 sm:ml-2">AM</span>
+    </div>
+
+    <!-- Date Display -->
+    <div id="dateDisplay" class="text-base sm:text-xl md:text-2xl font-medium text-purple-300/90 tracking-widest uppercase mt-4">
+      Loading date...
+    </div>
+
+    <!-- Fullscreen Live Video Stream Modal Container -->
+    <div id="videoModal" class="fixed inset-0 z-50 hidden flex-col items-center justify-center w-screen h-screen bg-black transition-all duration-300">
+      <!-- Fullscreen Header Controls Overlay -->
+      <div class="absolute top-0 left-0 right-0 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 flex items-center justify-between text-white pointer-events-auto">
+        <div class="flex items-center gap-3">
+          <span class="flex h-3 w-3 relative">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+          </span>
+          <i class="fas fa-tv text-purple-400 text-lg sm:text-xl"></i>
+          <span id="videoTitle" class="font-bold text-sm sm:text-lg tracking-wide text-white drop-shadow">Live Video Channel</span>
+        </div>
+        <div class="flex items-center gap-2 sm:gap-3">
+          <button id="ccToggleButton" onclick="event.stopPropagation(); toggleCaptions();" class="text-xs px-3 py-1.5 rounded-full font-bold transition-all border border-slate-600 bg-slate-800/80 text-slate-300 hover:text-white backdrop-blur-md shadow-lg flex items-center gap-1.5" title="Toggle Captions">
+            <i class="fas fa-closed-captioning text-sm text-purple-400"></i> CC <span id="ccStatusText" class="text-[10px] uppercase font-bold text-slate-400 ml-0.5">OFF</span>
+          </button>
+          <button onclick="event.stopPropagation(); stopVideo();" class="text-white/90 hover:text-white bg-slate-800/80 hover:bg-red-600/80 backdrop-blur-md px-4 py-2 rounded-full transition-all text-xs sm:text-sm font-semibold flex items-center gap-2 border border-slate-700/60 shadow-lg">
+            <i class="fas fa-times text-sm"></i> Close Video
+          </button>
+        </div>
+      </div>
+
+      <!-- Video Player Display Container -->
+      <div class="w-full h-full flex items-center justify-center bg-black overflow-hidden relative">
+        <video id="videoPlayer" class="w-full h-full object-contain" controls autoplay playsinline></video>
+        <iframe id="videoIframe" class="w-full h-full border-0 hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+      </div>
+    </div>
+
+    <!-- Radio Playing Indicator Banner -->
+    <div id="radioBanner" class="mt-6 transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-3 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
+      <div class="flex items-center gap-2.5">
+        <i class="fas fa-radio text-purple-400 animate-pulse"></i>
+        <span id="radioStationTitle">Playing Radio</span>
+        <button onclick="event.stopPropagation(); stopRadio();" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Stop Radio">
+          <i class="fas fa-circle-stop text-red-400 text-base"></i>
+        </button>
+      </div>
+      <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 mt-1">
+        <button onclick="event.stopPropagation(); playRadioStation('klove');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">K-LOVE</button>
+        <button onclick="event.stopPropagation(); playRadioStation('npr');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">NPR</button>
+        <button onclick="event.stopPropagation(); playRadioStation('groove salad');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
+        <button onclick="event.stopPropagation(); promptCustomUrl();" class="px-2.5 py-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors"><i class="fas fa-plus text-[10px] mr-1"></i> Custom Stream</button>
+      </div>
+    </div>
+
+    <!-- Active Timer Display Widget -->
+    <div id="timerBanner" class="mt-4 transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-2.5 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md">
+      <div class="flex items-center gap-3">
+        <i class="fas fa-hourglass-half text-purple-400 animate-pulse"></i>
+        <span>Timer: <strong id="timerCountdown" class="text-white font-mono text-sm sm:text-base ml-1">00:00</strong></span>
+        <button onclick="event.stopPropagation(); cancelTimer(true);" class="ml-2 text-slate-400 hover:text-red-400 transition-colors" title="Cancel Timer">
+          <i class="fas fa-circle-xmark text-red-400 text-base"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Speech Feedback Banner -->
+    <div id="speechStatus" class="mt-8 transition-all duration-500 opacity-0 transform translate-y-2 flex items-center gap-3 bg-purple-950/40 border border-purple-800/40 px-6 py-2.5 rounded-full text-purple-200 text-sm sm:text-base font-medium backdrop-blur-md">
+      <i id="statusIcon" class="fas fa-microphone text-purple-400 animate-pulse"></i>
+      <span id="statusText">Listening...</span>
+    </div>
+
+    <!-- Closed Captions On-Screen Subtitle Display Overlay (Off by default) -->
+    <div id="liveSubtitleOverlay" class="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-3xl w-[90%] bg-black/90 border border-purple-500/50 text-amber-300 font-semibold text-lg sm:text-2xl px-6 py-3.5 rounded-2xl text-center shadow-2xl backdrop-blur-md transition-all duration-300 opacity-0 pointer-events-none z-50">
+      <span id="liveSubtitleText"></span>
+    </div>
+
+  </main>
+
+  <!-- Audio Element for Radio Playback -->
+  <audio id="radioPlayer" class="hidden" preload="none" crossorigin="anonymous"></audio>
+
+  <script>
+    // Global Element Declarations
+    const clockTime = document.getElementById('clockTime');
+    const ampmDisplay = document.getElementById('ampmDisplay');
+    const dateDisplay = document.getElementById('dateDisplay');
+    const glowOverlay = document.getElementById('glowOverlay');
+    const speechStatus = document.getElementById('speechStatus');
+    const statusText = document.getElementById('statusText');
+    const statusIcon = document.getElementById('statusIcon');
+    const radioPlayer = document.getElementById('radioPlayer');
+    const radioBanner = document.getElementById('radioBanner');
+    const radioStationTitle = document.getElementById('radioStationTitle');
+
+    const videoModal = document.getElementById('videoModal');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const videoIframe = document.getElementById('videoIframe');
+    const videoTitle = document.getElementById('videoTitle');
+
+    // Assistant State Variables
+    let synth = window.speechSynthesis || null;
+    let recognition = null;
+    let isAwake = false;
+    let wakeTimeout = null;
+    let ignoreUntilTime = 0;
+    let audioUnlocked = false;
+    let captionsEnabled = false;
+
+    const DUCKED_VOLUME = 0.2;
+    const NORMAL_VOLUME = 1.0;
+
+    let hlsInstance = null;
+    let m3uChannels = [];
+    const M3U_PLAYLIST_URL = 'https://iptv-org.github.io/iptv/countries/us.m3u';
+
+    let weatherData = {
+      temp: null,
+      high: null,
+      low: null,
+      condition: 'Loading...',
+      humidity: null,
+      windSpeed: null,
+      precipProb: null
+    };
+
+    let activeTimer = null;
+    let timerInterval = null;
+    let timerEndTime = 0;
+
+    const radioPresets = {
+      'klove': {
+        name: 'K-LOVE Radio',
+        urls: [
+          'https://klove.streamguys1.com/klove-mp3',
+          'https://stream.klove.com/live',
+          'https://klove.cdnstream1.com/2554_128.mp3'
+        ]
+      },
+      'npr': {
+        name: 'NPR News',
+        urls: [
+          'https://npr-ice.streamguys1.com/live.mp3',
+          'https://npr.streamguys1.com/live.mp3'
+        ]
+      },
+      'lofi': {
+        name: 'Lofi Chill Beat',
+        urls: [
+          'https://ice2.somafm.com/groovesalad-128-mp3',
+          'https://stream.zeno.fm/f3wvbbqmdg8uv'
+        ]
+      },
+      'groove salad': {
+        name: 'SomaFM Groove Salad',
+        urls: [
+          'https://ice2.somafm.com/groovesalad-128-mp3',
+          'https://ice1.somafm.com/groovesalad-128-mp3'
+        ]
+      }
+    };
+
+    function updateClock() {
+      const now = new Date();
+      let hours = now.getHours();
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+
+      if (clockTime) clockTime.textContent = `${hours}:${minutes}`;
+      if (ampmDisplay) ampmDisplay.textContent = ampm;
+
+      if (dateDisplay) {
+        const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
+        dateDisplay.textContent = now.toLocaleDateString('en-US', options);
+      }
+    }
+
+    async function fetchWeather() {
+      const weatherDisplay = document.getElementById('weatherDisplay');
+      try {
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&hourly=relativehumidity_2m&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto');
+        if (!res.ok) throw new Error('Weather API error');
+        const data = await res.json();
+
+        if (data && data.current_weather) {
+          const temp = Math.round(data.current_weather.temperature);
+          const code = data.current_weather.weathercode;
+          const wind = Math.round(data.current_weather.windspeed);
+
+          let high = null;
+          let low = null;
+          let precip = null;
+          if (data.daily) {
+            high = Math.round(data.daily.temperature_2m_max[0]);
+            low = Math.round(data.daily.temperature_2m_min[0]);
+            precip = data.daily.precipitation_probability_max ? data.daily.precipitation_probability_max[0] : 0;
+          }
+
+          let humidity = null;
+          if (data.hourly && data.hourly.relativehumidity_2m) {
+            humidity = data.hourly.relativehumidity_2m[0];
+          }
+
+          let condition = 'Clear';
+          let iconClass = 'fas fa-sun text-amber-400';
+          if (code === 0) { condition = 'Clear'; iconClass = 'fas fa-sun text-amber-400'; }
+          else if (code >= 1 && code <= 3) { condition = 'Partly Cloudy'; iconClass = 'fas fa-cloud-sun text-slate-300'; }
+          else if (code >= 45 && code <= 48) { condition = 'Foggy'; iconClass = 'fas fa-smog text-slate-400'; }
+          else if (code >= 51 && code <= 67) { condition = 'Rainy'; iconClass = 'fas fa-cloud-rain text-blue-400'; }
+          else if (code >= 71 && code <= 77) { condition = 'Snowy'; iconClass = 'fas fa-snowflake text-cyan-200'; }
+          else if (code >= 80 && code <= 82) { condition = 'Rain Showers'; iconClass = 'fas fa-cloud-showers-heavy text-blue-400'; }
+          else if (code >= 95) { condition = 'Thunderstorm'; iconClass = 'fas fa-bolt text-yellow-400'; }
+
+          weatherData = { temp, high, low, condition, humidity, windSpeed: wind, precipProb: precip };
+
+          if (weatherDisplay) {
+            weatherDisplay.innerHTML = `<i id="weatherIcon" class="${iconClass}"></i> ${temp}°F ${condition}`;
+          }
+        }
+      } catch (err) {
+        console.warn('Weather fetch failed:', err);
+        if (weatherDisplay) {
+          weatherDisplay.innerHTML = `<i class="fas fa-cloud text-slate-400"></i> Weather unavailable`;
+        }
+      }
+    }
+
+    async function loadM3UPlaylist() {
+      try {
+        let response;
+        try {
+          response = await fetch(M3U_PLAYLIST_URL);
+        } catch (err) {
+          response = await fetch(`https://corsproxy.io/?${encodeURIComponent(M3U_PLAYLIST_URL)}`);
+        }
+        
+        if (response.ok) {
+          const content = await response.text();
+          parseM3UContent(content);
+        }
+      } catch (err) {
+        console.warn('M3U playlist load warning:', err);
+      }
+    }
+
+    function parseM3UContent(data) {
+      m3uChannels = [];
+      const lines = data.split('\n');
+      let lastTitle = '';
+
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i].trim();
+        if (line.startsWith('#EXTINF:')) {
+          const commaIndex = line.lastIndexOf(',');
+          if (commaIndex !== -1) {
+            lastTitle = line.substring(commaIndex + 1).trim();
+          }
+        } else if (line && !line.startsWith('#')) {
+          if (lastTitle) {
+            m3uChannels.push({ name: lastTitle, url: line });
+          }
+          lastTitle = '';
+        }
+      }
+    }
+
+    function normalizeStr(str) {
+      if (!str) return '';
+      return str.toLowerCase()
+        .replace(/[^\w\s]/gi, '')
+        .replace(/\b(watch|play|stream|live|channel|video|tv|the|on)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function levenshteinDistance(a, b) {
+      const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
+      for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+      for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+          if (b.charAt(i - 1) === a.charAt(j - 1)) {
+            matrix[i][j] = matrix[i - 1][j - 1];
+          } else {
+            matrix[i][j] = Math.min(
+              matrix[i - 1][j - 1] + 1,
+              matrix[i][j - 1] + 1,
+              matrix[i - 1][j] + 1
+            );
+          }
+        }
+      }
+      return matrix[b.length][a.length];
+    }
+
+    function fuzzyScore(query, target) {
+      const qNorm = normalizeStr(query);
+      const tNorm = normalizeStr(target);
+      if (!qNorm || !tNorm) return 0;
+      
+      if (qNorm === tNorm) return 100;
+      if (tNorm.includes(qNorm)) return 90;
+      if (qNorm.includes(tNorm)) return 85;
+
+      const qTokens = qNorm.split(' ');
+      const tTokens = tNorm.split(' ');
+      let tokenMatches = 0;
+      for (const qTok of qTokens) {
+        if (qTok.length > 1 && tTokens.some(tTok => tTok.includes(qTok) || qTok.includes(tTok))) {
+          tokenMatches++;
+        }
+      }
+      if (tokenMatches > 0) {
+        return (tokenMatches / Math.max(qTokens.length, 1)) * 75;
+      }
+
+      const maxLen = Math.max(qNorm.length, tNorm.length);
+      if (maxLen === 0) return 0;
+      const dist = levenshteinDistance(qNorm, tNorm);
+      return (1 - dist / maxLen) * 60;
+    }
+
+    function findBestM3UMatches(query, topN) {
+      if (!topN) topN = 5;
+      if (!m3uChannels || m3uChannels.length === 0) return [];
+      
+      const scored = m3uChannels.map(ch => ({
+        channel: ch,
+        score: fuzzyScore(query, ch.name)
+      }));
+
+      scored.sort((a, b) => b.score - a.score);
+      return scored.slice(0, topN).filter(item => item.score > 25).map(item => item.channel);
+    }
+
+    async function playVideoStream(queryStr) {
+      unlockAudio();
+      let cleanQuery = extractCommand(queryStr);
+      if (!cleanQuery) cleanQuery = queryStr;
+      
+      showStatus(`Searching live channels for "${cleanQuery}"...`, 'fa-tv');
+      
+      const bestMatches = findBestM3UMatches(cleanQuery, 5);
+      if (!bestMatches || bestMatches.length === 0) {
+        speakResponse(`I couldn't find a video channel matching ${cleanQuery}.`);
+        return;
+      }
+
+      const matchUrls = bestMatches.map(ch => ch.url);
+      const matchTitle = bestMatches[0].name;
+
+      if (videoTitle) videoTitle.textContent = matchTitle;
+      if (videoModal) {
+        videoModal.classList.remove('hidden');
+        videoModal.classList.add('flex');
+      }
+
+      const played = await attemptHlsPlay(matchUrls);
+      if (!played) {
+        stopVideo();
+        speakResponse(`Unable to stream ${matchTitle}. Please try another channel.`);
+      } else {
+        speakResponse(`Playing ${matchTitle}.`);
+      }
+    }
+
+    function toggleCaptions() {
+      setCaptions(!captionsEnabled, true);
+    }
+
+    function setCaptions(enable, speak) {
+      if (speak === undefined) speak = true;
+      captionsEnabled = !!enable;
+
+      const ccBtn = document.getElementById('ccToggleButton');
+      const ccText = document.getElementById('ccStatusText');
+      if (ccBtn && ccText) {
+        if (captionsEnabled) {
+          ccBtn.className = "text-xs px-3 py-1.5 rounded-full font-bold transition-all border border-purple-400 bg-purple-900/80 text-white shadow-lg flex items-center gap-1.5";
+          ccText.textContent = "ON";
+          ccText.className = "text-[10px] uppercase font-bold text-purple-300 ml-0.5";
+        } else {
+          ccBtn.className = "text-xs px-3 py-1.5 rounded-full font-bold transition-all border border-slate-600 bg-slate-800/80 text-slate-300 hover:text-white backdrop-blur-md shadow-lg flex items-center gap-1.5";
+          ccText.textContent = "OFF";
+          ccText.className = "text-[10px] uppercase font-bold text-slate-400 ml-0.5";
+        }
+      }
+
+      if (videoPlayer && videoPlayer.textTracks) {
+        for (let i = 0; i < videoPlayer.textTracks.length; i++) {
+          videoPlayer.textTracks[i].mode = captionsEnabled ? 'showing' : 'hidden';
+        }
+      }
+
+      if (hlsInstance) {
+        if (captionsEnabled) {
+          if (hlsInstance.subtitleTracks && hlsInstance.subtitleTracks.length > 0) {
+            hlsInstance.subtitleTrack = 0;
+          }
+        } else {
+          hlsInstance.subtitleTrack = -1;
+        }
+      }
+
+      if (!captionsEnabled) {
+        hideLiveSubtitles();
+      }
+
+      if (speak) {
+        speakResponse(captionsEnabled ? "Captions turned on." : "Captions turned off.");
+      }
+    }
+
+    function showLiveSubtitles(text) {
+      const overlay = document.getElementById('liveSubtitleOverlay');
+      const subtitleText = document.getElementById('liveSubtitleText');
+      if (overlay && subtitleText) {
+        subtitleText.textContent = text;
+        overlay.classList.remove('opacity-0');
+        overlay.classList.add('opacity-100');
+      }
+    }
+
+    function hideLiveSubtitles() {
+      const overlay = document.getElementById('liveSubtitleOverlay');
+      if (overlay) {
+        overlay.classList.remove('opacity-100');
+        overlay.classList.add('opacity-0');
+      }
+    }
+
+    async function attemptHlsPlay(urls) {
+      if (!urls || urls.length === 0) return false;
+
+      for (const url of urls) {
+        try {
+          if (hlsInstance) {
+            hlsInstance.destroy();
+            hlsInstance = null;
+          }
+
+          if (window.Hls && Hls.isSupported()) {
+            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+            hlsInstance = hls;
+
+            const played = await new Promise((resolve) => {
+              hls.loadSource(url);
+              hls.attachMedia(videoPlayer);
+              hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (!captionsEnabled) {
+                  hls.subtitleTrack = -1;
+                } else if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+                  hls.subtitleTrack = 0;
+                }
+                videoPlayer.play().then(() => resolve(true)).catch(() => resolve(false));
+              });
+              hls.on(Hls.Events.ERROR, (evt, data) => {
+                if (data.fatal) resolve(false);
+              });
+              setTimeout(() => resolve(false), 4500);
+            });
+
+            if (played) return true;
+          } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+            videoPlayer.src = url;
+            if (videoPlayer.textTracks) {
+              for (let i = 0; i < videoPlayer.textTracks.length; i++) {
+                videoPlayer.textTracks[i].mode = captionsEnabled ? 'showing' : 'hidden';
+              }
+            }
+            await videoPlayer.play();
+            return true;
+          }
+        } catch(e) {
+          console.warn('HLS playback attempt failed for:', url, e);
+        }
+      }
+      return false;
+    }
+
+    function stopVideo() {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      if (videoPlayer) {
+        videoPlayer.pause();
+        videoPlayer.removeAttribute('src');
+        videoPlayer.load();
+        videoPlayer.classList.remove('hidden');
+      }
+      if (videoIframe) {
+        videoIframe.src = '';
+        videoIframe.classList.add('hidden');
+      }
+      if (videoModal) {
+        videoModal.classList.remove('flex');
+        videoModal.classList.add('hidden');
+      }
+    }
+
+    function promptCustomUrl() {
+      const url = prompt("Enter a direct audio or video stream URL (.mp3 or .m3u8):");
+      if (url && url.trim().length > 5) {
+        const cleanUrl = url.trim();
+        if (cleanUrl.includes('.m3u8')) {
+          playVideoStream(cleanUrl);
+        } else {
+          playRadioStation(cleanUrl);
+        }
+      }
+    }
+
+    async function playRadioStation(stationQuery) {
+      unlockAudio();
+      const cleanQuery = stationQuery.toLowerCase().replace(/radio|station|play|stream/g, '').trim();
+      let candidateUrls = [];
+      let stationName = 'Radio Stream';
+
+      if (stationQuery.startsWith('http://') || stationQuery.startsWith('https://')) {
+        candidateUrls = [stationQuery];
+        stationName = 'Custom Audio Stream';
+      } else {
+        for (const [key, preset] of Object.entries(radioPresets)) {
+          if (cleanQuery.includes(key) || key.includes(cleanQuery)) {
+            candidateUrls = [...preset.urls];
+            stationName = preset.name;
+            break;
+          }
+        }
+      }
+
+      if (candidateUrls.length === 0 && cleanQuery.length > 0) {
+        showStatus(`Searching for ${stationQuery}...`, 'fa-search');
+        const apiMirrors = [
+          'https://de1.api.radio-browser.info',
+          'https://nl1.api.radio-browser.info',
+          'https://at1.api.radio-browser.info'
+        ];
+
+        for (const mirror of apiMirrors) {
+          try {
+            const apiRes = await fetch(`${mirror}/json/stations/byname/${encodeURIComponent(cleanQuery)}?limit=3`);
+            const results = await apiRes.json();
+            if (results && results.length > 0) {
+              results.forEach(st => {
+                if (st.url_resolved) candidateUrls.push(st.url_resolved);
+                if (st.url) candidateUrls.push(st.url);
+              });
+              stationName = results[0].name || stationQuery;
+              break;
+            }
+          } catch(err) {
+            console.warn(`Radio API mirror ${mirror} failed:`, err);
+          }
+        }
+      }
+
+      if (candidateUrls.length === 0) {
+        radioBanner.classList.remove('flex');
+        radioBanner.classList.add('hidden');
+        speakResponse(`I couldn't find a radio stream for ${stationQuery}.`);
+        return;
+      }
+
+      showStatus(`Connecting to ${stationName}...`, 'fa-radio');
+      const playedSuccessfully = await attemptPlayUrls(candidateUrls, stationName);
+
+      if (!playedSuccessfully) {
+        radioBanner.classList.remove('flex');
+        radioBanner.classList.add('hidden');
+        speakResponse(`Unable to stream ${stationName}. Please try another station.`);
+      }
+    }
+
+    async function attemptPlayUrls(urls, stationName) {
+      if (!urls || urls.length === 0) return false;
+
+      for (let i = 0; i < urls.length; i++) {
+        const url = urls[i];
+        try {
+          radioPlayer.src = url;
+          const playPromise = radioPlayer.play();
+          const success = await Promise.race([
+            playPromise.then(() => true).catch(() => false),
+            new Promise(resolve => setTimeout(() => resolve(false), 6000))
+          ]);
+
+          if (success && !radioPlayer.paused) {
+            radioPlayer.volume = isAwake ? DUCKED_VOLUME : NORMAL_VOLUME;
+            radioStationTitle.textContent = `Playing ${stationName}`;
+            radioBanner.classList.remove('hidden');
+            radioBanner.classList.add('flex');
+            speakResponse(`Playing ${stationName}.`);
+            return true;
+          }
+        } catch(err) {
+          console.warn(`Stream candidate failed (${url}):`, err);
+        }
+      }
+      return false;
+    }
+
+    function stopRadio() {
+      if (radioPlayer) {
+        radioPlayer.pause();
+        radioPlayer.src = '';
+      }
+      radioBanner.classList.remove('flex');
+      radioBanner.classList.add('hidden');
+    }
+
+    function startTimer(durationMs, labelStr) {
+      if (activeTimer) clearTimeout(activeTimer);
+      if (timerInterval) clearInterval(timerInterval);
+
+      timerEndTime = Date.now() + durationMs;
+      updateTimerDisplay();
+
+      const timerBannerEl = document.getElementById('timerBanner');
+      if (timerBannerEl) {
+        timerBannerEl.classList.remove('hidden');
+        timerBannerEl.classList.add('flex');
+      }
+
+      timerInterval = setInterval(() => {
+        const remaining = timerEndTime - Date.now();
+        if (remaining <= 0) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+          hideTimerWidget();
+          playAlarmSound();
+          speakResponse(`Time's up! Your ${labelStr || 'timer'} is finished.`);
+        } else {
+          updateTimerDisplay();
+        }
+      }, 200);
+    }
+
+    function updateTimerDisplay() {
+      const timerCountdownEl = document.getElementById('timerCountdown');
+      if (!timerCountdownEl) return;
+      const remaining = Math.max(0, timerEndTime - Date.now());
+      const totalSeconds = Math.ceil(remaining / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+
+      let timeStr = '';
+      if (hours > 0) {
+        timeStr = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      } else {
+        timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+      timerCountdownEl.textContent = timeStr;
+    }
+
+    function cancelTimer(speakConfirm) {
+      if (speakConfirm === undefined) speakConfirm = true;
+      if (activeTimer) clearTimeout(activeTimer);
+      if (timerInterval) clearInterval(timerInterval);
+      activeTimer = null;
+      timerInterval = null;
+      hideTimerWidget();
+      if (speakConfirm) {
+        speakResponse("Timer canceled.");
+      }
+    }
+
+    function hideTimerWidget() {
+      const timerBannerEl = document.getElementById('timerBanner');
+      if (timerBannerEl) {
+        timerBannerEl.classList.remove('flex');
+        timerBannerEl.classList.add('hidden');
+      }
+    }
+
+    function processCommand(cmd) {
+      showStatus(`"${cmd}"`, 'fa-comment');
+      if (!cmd) return;
+
+      // 1. Caption / Subtitle Toggle Commands (Supports "turn off captions", "captions off", "disable cc", etc.)
+      if (cmd.includes('caption') || cmd.includes('subtitle') || cmd.includes('closed caption') || /\bcc\b/.test(cmd)) {
+        if (cmd.includes('off') || cmd.includes('disable') || cmd.includes('hide') || cmd.includes('stop') || cmd.includes('turn off') || cmd.includes('no') || cmd.includes('remove')) {
+          setCaptions(false);
+        } else if (cmd.includes('on') || cmd.includes('enable') || cmd.includes('show') || cmd.includes('start') || cmd.includes('turn on')) {
+          setCaptions(true);
+        } else {
+          setCaptions(!captionsEnabled);
+        }
+        return;
+      }
+
+      // 2. Stop / Silence Command
+      if (cmd.includes('stop') || cmd.includes('pause') || cmd.includes('shut up') || cmd.includes('quiet') || cmd.includes('dismiss') || cmd.includes('turn off') || cmd.includes('cancel') || cmd.includes('close video')) {
+        let stoppedSomething = false;
+        if (radioPlayer && !radioPlayer.paused) {
+          stopRadio();
+          stoppedSomething = true;
+        }
+        if (videoModal && !videoModal.classList.contains('hidden')) {
+          stopVideo();
+          stoppedSomething = true;
+        }
+        if (timerInterval || activeTimer) {
+          cancelTimer(false);
+          stoppedSomething = true;
+        }
+        if (synth) synth.cancel();
+        speakResponse(stoppedSomething ? "Stopping." : "Stopped.");
+        return;
+      }
+
+      // 3. Timer Command
+      if (cmd.includes('timer')) {
+        let totalMs = 0;
+        let labels = [];
+
+        const hrMatch = cmd.match(/(\d+)\s*(hour|hr)/);
+        const minMatch = cmd.match(/(\d+)\s*(minute|min)/);
+        const secMatch = cmd.match(/(\d+)\s*(second|sec)/);
+
+        if (hrMatch) {
+          const h = parseInt(hrMatch[1]);
+          totalMs += h * 3600 * 1000;
+          labels.push(`${h} hour${h > 1 ? 's' : ''}`);
+        }
+        if (minMatch) {
+          const m = parseInt(minMatch[1]);
+          totalMs += m * 60 * 1000;
+          labels.push(`${m} minute${m > 1 ? 's' : ''}`);
+        }
+        if (secMatch) {
+          const s = parseInt(secMatch[1]);
+          totalMs += s * 1000;
+          labels.push(`${s} second${s > 1 ? 's' : ''}`);
+        }
+
+        if (totalMs > 0) {
+          const durationLabel = labels.join(' and ');
+          startTimer(totalMs, durationLabel);
+          speakResponse(`Timer set for ${durationLabel}.`);
+        } else {
+          speakResponse("Please specify a duration, such as 5 minutes or 30 seconds.");
+        }
+        return;
+      }
+
+      // 4. Radio Command (Strictly requires user to specify "play radio [name]")
+      const radioMatch = cmd.match(/(?:play|start|listen to|turn on)\s+radio(?:\s+station)?\s+(.+)/i) || cmd.match(/^radio\s+(.+)/i);
+      if (radioMatch) {
+        const stationQuery = radioMatch[1].trim();
+        if (stationQuery) {
+          playRadioStation(stationQuery);
+          return;
+        }
+      }
+      if (cmd === 'play radio' || cmd === 'turn on radio' || cmd === 'start radio') {
+        speakResponse("Please specify a radio station, for example say play radio K-LOVE or play radio NPR.");
+        return;
+      }
+
+      // 5. Video / Live TV Stream Command
+      if (cmd.includes('watch') || cmd.includes('video') || cmd.includes('tv') || cmd.includes('channel') || cmd.includes('stream') || cmd.startsWith('play ')) {
+        playVideoStream(cmd);
+        return;
+      }
+
+      // 6. Weather Command
+      if (cmd.includes('weather') || cmd.includes('temperature') || cmd.includes('forecast') || cmd.includes('outside')) {
+        if (weatherData.temp !== null) {
+          let forecastText = `Currently in Marshall, Illinois, it is ${weatherData.temp} degrees and ${weatherData.condition}. `;
+          if (weatherData.high !== null && weatherData.low !== null) {
+            forecastText += `Today's high is ${weatherData.high} degrees with a low of ${weatherData.low} degrees. `;
+          }
+          if (weatherData.humidity !== null && weatherData.windSpeed !== null) {
+            forecastText += `Humidity is ${weatherData.humidity} percent with winds at ${weatherData.windSpeed} miles per hour. `;
+          }
+          if (weatherData.precipProb > 10) {
+            forecastText += `There is a ${weatherData.precipProb} percent chance of rain today.`;
+          }
+          speakResponse(forecastText);
+        } else {
+          speakResponse("Fetching the latest weather data for Marshall, Illinois.");
+        }
+        return;
+      }
+
+      // 7. Time Command
+      if (/\btime\b/.test(cmd) || cmd.includes('what time')) {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        speakResponse(`It is currently ${timeStr}.`);
+        return;
+      }
+
+      // 8. Date Command
+      if (cmd.includes('date') || cmd.includes('day is it') || cmd.includes('today')) {
+        const now = new Date();
+        const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
+        speakResponse(`Today is ${now.toLocaleDateString('en-US', options)}.`);
+        return;
+      }
+
+      // 9. Greetings & Info
+      if (cmd.includes('hello') || cmd.includes('hi') || cmd.includes('hey')) {
+        speakResponse("Hello! How can I help you today?");
+        return;
+      }
+      if (cmd.includes('how are you')) {
+        speakResponse("I'm doing great, ready to assist!");
+        return;
+      }
+      if (cmd.includes('who are you') || cmd.includes('your name')) {
+        speakResponse("I am Jessie, your voice assistant.");
+        return;
+      }
+
+      // 10. Fun & Utilities
+      if (cmd.includes('joke')) {
+        const jokes = [
+          "Why don't scientists trust atoms? Because they make up everything!",
+          "Why did the computer go to the doctor? Because it had a virus!",
+          "Parallel lines have so much in common. It's a shame they'll never meet.",
+          "What do you call a fake noodle? An impasta!"
+        ];
+        speakResponse(jokes[Math.floor(Math.random() * jokes.length)]);
+        return;
+      }
+
+      if (cmd.includes('flip a coin') || cmd.includes('coin flip')) {
+        const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
+        speakResponse(`Flipped a coin! It landed on ${result}.`);
+        return;
+      }
+
+      if (cmd.includes('roll a die') || cmd.includes('roll a dice')) {
+        const roll = Math.floor(Math.random() * 6) + 1;
+        speakResponse(`You rolled a ${roll}.`);
+        return;
+      }
+
+      // Default fallback
+      speakResponse("I'm sorry, I didn't catch that. Could you repeat?");
+    }
+
+    function speakResponse(text) {
+      if (captionsEnabled) {
+        showLiveSubtitles(text);
+      } else {
+        hideLiveSubtitles();
+      }
+
+      if (!synth) {
+        sleepJessie();
+        return;
+      }
+      synth.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05;
+
+      const voices = synth.getVoices();
+      const preferredVoice = voices.find(v => (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha') || v.name.includes('Karen')) && v.lang.startsWith('en'));
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      showStatus(text, 'fa-volume-high');
+
+      utterance.onend = () => { sleepJessie(); };
+      utterance.onerror = () => { sleepJessie(); };
+
+      synth.speak(utterance);
+    }
+
+    function sleepJessie() {
+      isAwake = false;
+      if (wakeTimeout) clearTimeout(wakeTimeout);
+
+      if (radioPlayer) radioPlayer.volume = NORMAL_VOLUME;
+
+      glowOverlay.classList.remove('opacity-100');
+      glowOverlay.classList.add('opacity-0');
+      hideStatus();
+      hideLiveSubtitles();
+    }
+
+    function wakeUpJessie() {
+      isAwake = true;
+      ignoreUntilTime = Date.now() + 700;
+      
+      glowOverlay.classList.remove('opacity-0');
+      glowOverlay.classList.add('opacity-100');
+      
+      if (radioPlayer) radioPlayer.volume = DUCKED_VOLUME;
+
+      playTone(587.33, 0.12, 'sine', 0.05);
+      setTimeout(() => playTone(880, 0.18, 'sine', 0.05), 100);
+
+      showStatus('Listening...', 'fa-microphone');
+      resetWakeTimeout();
+    }
+
+    function resetWakeTimeout() {
+      if (wakeTimeout) clearTimeout(wakeTimeout);
+      wakeTimeout = setTimeout(() => {
+        if (isAwake) sleepJessie();
+      }, 8000);
+    }
+
+    function showStatus(msg, iconClass) {
+      speechStatus.classList.remove('opacity-0', 'translate-y-2');
+      speechStatus.classList.add('opacity-100', 'translate-y-0');
+      statusText.textContent = msg;
+      statusIcon.className = `fas ${iconClass} text-purple-400 animate-pulse`;
+    }
+
+    function hideStatus() {
+      speechStatus.classList.remove('opacity-100', 'translate-y-0');
+      speechStatus.classList.add('opacity-0', 'translate-y-2');
+    }
+
+    function handleContainerClick() {
+      unlockAudio();
+      if (!isAwake) wakeUpJessie();
+      else sleepJessie();
+    }
+
+    function unlockAudio() {
+      if (!audioUnlocked && radioPlayer) {
+        audioUnlocked = true;
+        radioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
+        radioPlayer.play().then(() => {
+          radioPlayer.pause();
+          radioPlayer.src = "";
+        }).catch(() => {});
+      }
+    }
+
+    function playTone(freq, duration, type, maxGain) {
+      if (!type) type = 'sine';
+      if (!maxGain) maxGain = 0.08;
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(maxGain, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch(e) {}
+    }
+
+    function playAlarmSound() {
+      playTone(800, 0.2, 'square', 0.15);
+      setTimeout(() => playTone(800, 0.2, 'square', 0.15), 300);
+      setTimeout(() => playTone(800, 0.4, 'square', 0.15), 600);
+    }
+
+    function extractCommand(transcript) {
+      if (!transcript) return '';
+      let cmd = transcript.toLowerCase()
+        .replace(/^(hey|hi|hello|ok|okay)\s+jessie\b/gi, '')
+        .replace(/\bjessie\b/gi, '')
+        .trim();
+      cmd = cmd.replace(/^(hey|hi|hello|ok|okay)\b/gi, '').trim();
+      return cmd;
+    }
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        console.warn('Speech recognition not supported in this browser.');
+        return;
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        const now = Date.now();
+        const lastIndex = event.results.length - 1;
+        const result = event.results[lastIndex];
+        const transcript = result[0].transcript.trim().toLowerCase();
+
+        if (!isAwake) {
+          if (transcript.includes('jessie')) {
+            wakeUpJessie();
+            if (result.isFinal) {
+              const cleanCommand = extractCommand(transcript);
+              if (cleanCommand.length > 2 && !['b', 'c', 'g', 'p', 't', 'v', 'e', 'beep'].includes(cleanCommand)) {
+                processCommand(cleanCommand);
+              }
+            }
+          }
+        } else {
+          if (now < ignoreUntilTime) return;
+
+          resetWakeTimeout();
+          if (result.isFinal) {
+            const cleanCommand = extractCommand(transcript);
+            if (cleanCommand.length > 0) {
+              processCommand(cleanCommand);
+            }
+          }
+        }
+      };
+
+      recognition.onerror = (err) => {
+        console.warn('Speech recognition error:', err);
+      };
+
+      recognition.onend = () => {
+        try {
+          recognition.start();
+        } catch(e) {}
+      };
+
+      try {
+        recognition.start();
+      } catch(e) {}
+    }
+
+    // Attach global click handler to window scope
+    window.handleContainerClick = handleContainerClick;
+    window.toggleCaptions = toggleCaptions;
+
+    window.onload = function() {
+      updateClock();
+      setInterval(updateClock, 1000);
+      
+      fetchWeather();
+      setInterval(fetchWeather, 600000);
+
+      loadM3UPlaylist();
+      initSpeechRecognition();
+    };
+  </script>
+</body>
+</html>
