@@ -179,6 +179,7 @@
     let synth = window.speechSynthesis || null;
     let recognition = null;
     let isAwake = false;
+    let isSpeaking = false;
     let wakeTimeout = null;
     let ignoreUntilTime = 0;
     let audioUnlocked = false;
@@ -196,7 +197,6 @@
       high: null,
       low: null,
       condition: 'Loading...',
-      humidity: null,
       windSpeed: null,
       precipProb: null
     };
@@ -258,7 +258,13 @@
     async function fetchWeather() {
       const weatherDisplay = document.getElementById('weatherDisplay');
       try {
-        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&hourly=relativehumidity_2m&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto');
+        let res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&hourly=relative_humidity_2m&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto');
+        
+        if (!res.ok) {
+          // Fallback call in case parameter options change or fail
+          res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph');
+        }
+
         if (!res.ok) throw new Error('Weather API error');
         const data = await res.json();
 
@@ -271,14 +277,14 @@
           let low = null;
           let precip = null;
           if (data.daily) {
-            high = Math.round(data.daily.temperature_2m_max[0]);
-            low = Math.round(data.daily.temperature_2m_min[0]);
-            precip = data.daily.precipitation_probability_max ? data.daily.precipitation_probability_max[0] : 0;
+            if (data.daily.temperature_2m_max) high = Math.round(data.daily.temperature_2m_max[0]);
+            if (data.daily.temperature_2m_min) low = Math.round(data.daily.temperature_2m_min[0]);
+            if (data.daily.precipitation_probability_max) precip = data.daily.precipitation_probability_max[0];
           }
 
           let humidity = null;
-          if (data.hourly && data.hourly.relativehumidity_2m) {
-            humidity = data.hourly.relativehumidity_2m[0];
+          if (data.hourly && data.hourly.relative_humidity_2m) {
+            humidity = data.hourly.relative_humidity_2m[0];
           }
 
           let condition = 'Clear';
@@ -291,7 +297,7 @@
           else if (code >= 80 && code <= 82) { condition = 'Rain Showers'; iconClass = 'fas fa-cloud-showers-heavy text-blue-400'; }
           else if (code >= 95) { condition = 'Thunderstorm'; iconClass = 'fas fa-bolt text-yellow-400'; }
 
-          weatherData = { temp, high, low, condition, humidity, windSpeed: wind, precipProb: precip };
+          weatherData = { temp, high, low, condition, windSpeed: wind, precipProb: precip };
 
           if (weatherDisplay) {
             weatherDisplay.innerHTML = `<i id="weatherIcon" class="${iconClass}"></i> ${temp}°F ${condition}`;
@@ -852,8 +858,8 @@
           if (weatherData.high !== null && weatherData.low !== null) {
             forecastText += `Today's high is ${weatherData.high} degrees with a low of ${weatherData.low} degrees. `;
           }
-          if (weatherData.humidity !== null && weatherData.windSpeed !== null) {
-            forecastText += `Humidity is ${weatherData.humidity} percent with winds at ${weatherData.windSpeed} miles per hour. `;
+          if (weatherData.windSpeed !== null) {
+            forecastText += `Winds are at ${weatherData.windSpeed} miles per hour. `;
           }
           if (weatherData.precipProb > 10) {
             forecastText += `There is a ${weatherData.precipProb} percent chance of rain today.`;
@@ -936,6 +942,11 @@
       }
       synth.cancel();
 
+      isSpeaking = true;
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+      }
+
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 1.0;
       utterance.pitch = 1.05;
@@ -948,8 +959,19 @@
 
       showStatus(text, 'fa-volume-high');
 
-      utterance.onend = () => { sleepJessie(); };
-      utterance.onerror = () => { sleepJessie(); };
+      const finishSpeech = () => {
+        sleepJessie();
+        ignoreUntilTime = Date.now() + 600;
+        isSpeaking = false;
+        setTimeout(() => {
+          if (recognition) {
+            try { recognition.start(); } catch(e) {}
+          }
+        }, 300);
+      };
+
+      utterance.onend = finishSpeech;
+      utterance.onerror = finishSpeech;
 
       synth.speak(utterance);
     }
@@ -1071,6 +1093,10 @@
 
       recognition.onresult = (event) => {
         const now = Date.now();
+        if (isSpeaking || (synth && synth.speaking) || now < ignoreUntilTime) {
+          return;
+        }
+
         const lastIndex = event.results.length - 1;
         const result = event.results[lastIndex];
         const transcript = result[0].transcript.trim().toLowerCase();
@@ -1086,8 +1112,6 @@
             }
           }
         } else {
-          if (now < ignoreUntilTime) return;
-
           resetWakeTimeout();
           if (result.isFinal) {
             const cleanCommand = extractCommand(transcript);
@@ -1103,9 +1127,11 @@
       };
 
       recognition.onend = () => {
-        try {
-          recognition.start();
-        } catch(e) {}
+        if (!isSpeaking) {
+          try {
+            recognition.start();
+          } catch(e) {}
+        }
       };
 
       try {
