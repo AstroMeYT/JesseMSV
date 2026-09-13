@@ -191,9 +191,10 @@
           </button>
         </div>
         <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 mt-1">
-          <button onclick="event.stopPropagation(); playRadioStation('klove');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">K-LOVE</button>
-          <button onclick="event.stopPropagation(); playRadioStation('npr');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">NPR</button>
-          <button onclick="event.stopPropagation(); playRadioStation('lofi');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
+          <button onclick="event.stopPropagation(); playRadioByQuery('News');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">News</button>
+          <button onclick="event.stopPropagation(); playRadioByQuery('Jazz');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Jazz</button>
+          <button onclick="event.stopPropagation(); playRadioByQuery('Lofi');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Lofi</button>
+          <button onclick="event.stopPropagation(); playRadioByQuery('Rock');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Rock</button>
         </div>
       </div>
 
@@ -340,30 +341,154 @@
     let timerEndTime = 0;
     let activeReminders = [];
 
-    const radioPresets = {
-      'klove': {
-        name: 'K-LOVE Radio',
-        urls: [
-          'https://klove.streamguys1.com/klove-mp3',
-          'https://stream.klove.com/live',
-          'https://klove.cdnstream1.com/2554_128.mp3'
-        ]
-      },
-      'npr': {
-        name: 'NPR News',
-        urls: [
-          'https://npr-ice.streamguys1.com/live.mp3',
-          'https://npr.streamguys1.com/live.mp3'
-        ]
-      },
-      'lofi': {
-        name: 'Lofi Chill Beat',
-        urls: [
-          'https://ice2.somafm.com/groovesalad-128-mp3',
-          'https://stream.zeno.fm/f3wvbbqmdg8uv'
-        ]
+    let currentRadioAbortController = null;
+
+    async function playRadioByQuery(query) {
+      const cleanQuery = (query || '')
+        .replace(/\b(play|listen|to|radio|station|on|jessie|start|turn|stream)\b/gi, '')
+        .trim();
+
+      const searchTerm = cleanQuery.length > 0 ? cleanQuery : 'top';
+
+      showStatus(`Searching live radio for "${searchTerm}"...`, 'fa-radio');
+
+      if (currentRadioAbortController) {
+        currentRadioAbortController.abort();
       }
-    };
+      currentRadioAbortController = new AbortController();
+
+      const apiHosts = [
+        'https://de1.api.radio-browser.info',
+        'https://at1.api.radio-browser.info',
+        'https://nl1.api.radio-browser.info'
+      ];
+
+      let stations = [];
+      const encTerm = encodeURIComponent(searchTerm);
+
+      // Search strategies: 1) by top clickcount name search, 2) by top clickcount tag search, 3) fallback by votes
+      const searchUrls = searchTerm === 'top' 
+        ? apiHosts.map(host => `${host}/json/stations/topclick/20`)
+        : [
+            ...apiHosts.map(host => `${host}/json/stations/search?name=${encTerm}&hidebroken=true&order=clickcount&reverse=true&limit=20`),
+            ...apiHosts.map(host => `${host}/json/stations/search?tag=${encTerm}&hidebroken=true&order=clickcount&reverse=true&limit=20`),
+            ...apiHosts.map(host => `${host}/json/stations/search?name=${encTerm}&order=votes&reverse=true&limit=15`)
+          ];
+
+      for (const url of searchUrls) {
+        try {
+          const res = await fetch(url, { signal: currentRadioAbortController.signal });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.length > 0) {
+              stations = data;
+              break;
+            }
+          }
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      if (!stations || stations.length === 0) {
+        speakResponse(`Sorry, I couldn't find any active radio stations matching ${searchTerm}.`);
+        return;
+      }
+
+      let playedSuccess = false;
+      // Test top matching stations until one plays successfully
+      for (let i = 0; i < Math.min(stations.length, 7); i++) {
+        const station = stations[i];
+        const streamUrl = station.url_resolved || station.url;
+        if (!streamUrl) continue;
+
+        const success = await attemptRadioStream(streamUrl, station.name);
+        if (success) {
+          playedSuccess = true;
+          if (radioBanner) radioBanner.classList.remove('hidden');
+          if (radioStationTitle) radioStationTitle.textContent = station.name;
+          speakResponse(`Playing ${station.name}.`);
+          break;
+        }
+      }
+
+      if (!playedSuccess) {
+        speakResponse(`Unable to connect to live radio streams for ${searchTerm}. Please try another station or genre.`);
+      }
+    }
+
+    function attemptRadioStream(url, name) {
+      return new Promise((resolve) => {
+        radioPlayer.pause();
+        radioPlayer.src = url;
+        radioPlayer.load();
+
+        let resolved = false;
+
+        const onCanPlay = () => {
+          if (resolved) return;
+          resolved = true;
+          radioPlayer.play()
+            .then(() => {
+              radioPlayer.volume = isAwake ? DUCKED_VOLUME : NORMAL_VOLUME;
+              cleanup();
+              resolve(true);
+            })
+            .catch(() => {
+              cleanup();
+              resolve(false);
+            });
+        };
+
+        const onError = () => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          resolve(false);
+        };
+
+        const timer = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          resolve(false);
+        }, 5000);
+
+        function cleanup() {
+          clearTimeout(timer);
+          radioPlayer.removeEventListener('canplay', onCanPlay);
+          radioPlayer.removeEventListener('playing', onCanPlay);
+          radioPlayer.removeEventListener('error', onError);
+        }
+
+        radioPlayer.addEventListener('canplay', onCanPlay);
+        radioPlayer.addEventListener('playing', onCanPlay);
+        radioPlayer.addEventListener('error', onError);
+
+        radioPlayer.play().then(() => {
+          if (!resolved) {
+            resolved = true;
+            radioPlayer.volume = isAwake ? DUCKED_VOLUME : NORMAL_VOLUME;
+            cleanup();
+            resolve(true);
+          }
+        }).catch(() => {});
+      });
+    }
+
+    function stopRadio() {
+      if (currentRadioAbortController) {
+        currentRadioAbortController.abort();
+        currentRadioAbortController = null;
+      }
+      if (radioPlayer) {
+        radioPlayer.pause();
+        radioPlayer.removeAttribute('src');
+        radioPlayer.load();
+      }
+      if (radioBanner) radioBanner.classList.add('hidden');
+      showStatus('Radio stopped', 'fa-circle-stop');
+    }
 
     async function loadM3UPlaylist() {
       try {
@@ -1098,25 +1223,13 @@
         return;
       }
 
-      // Strict Radio Commands ("play radio [name]")
-      if (lower.includes('play radio') || lower.includes('start radio') || lower.includes('turn on radio')) {
-        if (lower.includes('klove') || lower.includes('k-love')) {
-          playRadioStation('klove');
-          speakResponse("Playing K-LOVE radio.");
-          return;
-        } else if (lower.includes('npr')) {
-          playRadioStation('npr');
-          speakResponse("Playing NPR radio.");
-          return;
-        } else if (lower.includes('lofi') || lower.includes('chill')) {
-          playRadioStation('lofi');
-          speakResponse("Playing lofi station.");
-          return;
-        } else {
-          speakResponse("Playing K-LOVE radio.");
-          playRadioStation('klove');
-          return;
-        }
+      if (lower.includes('play radio') || lower.includes('start radio') || lower.includes('turn on radio') || lower.includes('radio station') || (lower.startsWith('play ') && lower.includes('radio'))) {
+        let stationQuery = commandText
+          .replace(/^(play|start|turn on|listen to)\s+/i, '')
+          .replace(/\b(radio station|radio|station)\b/gi, '')
+          .trim();
+        playRadioByQuery(stationQuery || 'top');
+        return;
       }
 
       // Video Stream M3U Search Commands (Checked BEFORE weather to prevent "play fox weather" from reading weather text)
