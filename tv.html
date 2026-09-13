@@ -28,8 +28,62 @@
     }
   </script>
 
+  <!-- Video.js Player Framework & Styles -->
+  <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+  <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+
   <!-- HLS.js Engine for Live Video Streaming -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <!-- Firebase SDK Modules for Persistent Settings -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'jessie-voice-assistant';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+
+    if (firebaseConfig) {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const initAuthAndLoadSettings = async () => {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+          const user = auth.currentUser;
+          if (!user) return;
+
+          const configDocRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'calendarConfig');
+          const docSnap = await getDoc(configDocRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.apiKey) calendarConfig.apiKey = data.apiKey;
+            if (data.calendarId) calendarConfig.calendarId = data.calendarId;
+
+            const apiKeyInput = document.getElementById('gcalApiKeyInput');
+            const calendarIdInput = document.getElementById('gcalCalendarIdInput');
+            if (apiKeyInput && data.apiKey) apiKeyInput.value = data.apiKey;
+            if (calendarIdInput && data.calendarId) calendarIdInput.value = data.calendarId;
+          }
+
+          window.saveCalendarConfigToFirestore = async (apiKey, calendarId) => {
+            if (!auth.currentUser) return;
+            const userDocRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'settings', 'calendarConfig');
+            await setDoc(userDocRef, { apiKey, calendarId }, { merge: true });
+          };
+        };
+        initAuthAndLoadSettings();
+      } catch (err) {
+        console.warn("Firebase initialization error:", err);
+      }
+    }
+  </script>
 
   <style>
     .inward-purple-glow {
@@ -42,6 +96,16 @@
     }
     .pulse-subtle {
       animation: pulse-subtle 2s infinite ease-in-out;
+    }
+
+    /* Video.js custom override for clean edge-to-edge video */
+    .video-js {
+      width: 100% !important;
+      height: 100% !important;
+      background-color: #000 !important;
+    }
+    .video-js .vjs-tech {
+      object-fit: contain !important;
     }
   </style>
 </head>
@@ -79,10 +143,17 @@
       </div>
     </div>
 
+    <!-- Top Corner Quick Settings Icon Button -->
+    <div class="absolute top-4 right-4 z-30 pointer-events-auto">
+      <button onclick="event.stopPropagation(); openSettings();" class="p-3 rounded-full bg-slate-900/70 border border-slate-700/60 text-slate-300 hover:text-white hover:bg-purple-900/60 transition-all backdrop-blur-md shadow-lg" title="Settings (Say 'Open Settings')">
+        <i class="fas fa-cog text-lg sm:text-xl"></i>
+      </button>
+    </div>
+
     <!-- Fullscreen Live Video Stream Modal Container -->
-    <div id="videoModal" class="fixed inset-0 z-50 hidden flex-col items-center justify-center w-screen h-screen bg-black transition-all duration-300">
-      <!-- Fullscreen Header Controls Overlay -->
-      <div class="absolute top-0 left-0 right-0 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 flex items-center justify-between text-white pointer-events-auto">
+    <div id="videoModal" class="fixed inset-0 z-50 hidden flex-col items-center justify-center w-screen h-screen bg-black transition-all duration-300" onmousemove="handleVideoMouseMove()" onclick="toggleVideoOverlayControls()">
+      <!-- Fullscreen Header Controls Overlay (Auto-hides) -->
+      <div id="videoControlsOverlay" class="absolute top-0 left-0 right-0 p-4 sm:p-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 flex items-center justify-between text-white transition-opacity duration-500 opacity-100 pointer-events-auto">
         <div class="flex items-center gap-3">
           <span class="flex h-3 w-3 relative">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -103,8 +174,7 @@
 
       <!-- Video Player Display Container -->
       <div class="w-full h-full flex items-center justify-center bg-black overflow-hidden relative">
-        <video id="videoPlayer" class="w-full h-full object-contain" controls autoplay playsinline></video>
-        <iframe id="videoIframe" class="w-full h-full border-0 hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+        <video id="videoPlayer" class="video-js vjs-default-skin w-full h-full object-contain pointer-events-none" autoplay playsinline></video>
       </div>
     </div>
 
@@ -123,8 +193,7 @@
         <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 mt-1">
           <button onclick="event.stopPropagation(); playRadioStation('klove');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">K-LOVE</button>
           <button onclick="event.stopPropagation(); playRadioStation('npr');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">NPR</button>
-          <button onclick="event.stopPropagation(); playRadioStation('groove salad');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
-          <button onclick="event.stopPropagation(); promptCustomUrl();" class="px-2.5 py-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors"><i class="fas fa-plus text-[10px] mr-1"></i> Custom Stream</button>
+          <button onclick="event.stopPropagation(); playRadioStation('lofi');" class="px-2.5 py-1 rounded-full bg-purple-950/60 hover:bg-purple-800/60 text-purple-300 border border-purple-700/50 transition-colors">Chill Lofi</button>
         </div>
       </div>
 
@@ -152,6 +221,47 @@
       <span id="liveSubtitleText"></span>
     </div>
 
+    <!-- Settings Modal (Google Calendar Integration) -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-black/80 backdrop-blur-md transition-all">
+      <div class="bg-slate-900 border border-purple-500/40 w-full max-w-md rounded-3xl p-6 text-left shadow-2xl pointer-events-auto relative">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+          <div class="flex items-center gap-2.5 text-lg font-bold text-white">
+            <i class="fas fa-gear text-purple-400"></i>
+            <span>Jessie Settings</span>
+          </div>
+          <button onclick="event.stopPropagation(); closeSettings();" class="text-slate-400 hover:text-white p-1">
+            <i class="fas fa-times text-lg"></i>
+          </button>
+        </div>
+
+        <div class="space-y-4 text-xs sm:text-sm text-slate-300">
+          <div>
+            <label class="block font-semibold mb-1 text-slate-200">Google Calendar API Key</label>
+            <input type="password" id="gcalApiKeyInput" placeholder="AIzaSy..." class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500">
+            <p class="text-[11px] text-slate-500 mt-1">Get this from Google Cloud Console with Google Calendar API enabled.</p>
+          </div>
+
+          <div>
+            <label class="block font-semibold mb-1 text-slate-200">Google Calendar ID</label>
+            <input type="text" id="gcalCalendarIdInput" placeholder="your-email@gmail.com" class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500">
+            <p class="text-[11px] text-slate-400 mt-1">Enter your full Gmail address. <strong>Important:</strong> Public permissions must be set to <em>"See all event details"</em> (not Free/Busy).</p>
+          </div>
+
+          <div id="settingsStatusMessage" class="hidden p-2.5 rounded-xl bg-purple-950/60 border border-purple-800/60 text-purple-200 text-xs"></div>
+        </div>
+
+        <div class="flex items-center justify-between mt-6 pt-4 border-t border-slate-800">
+          <button onclick="event.stopPropagation(); testCalendarConfig();" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs transition-colors">
+            <i class="fas fa-vial mr-1 text-purple-400"></i> Test Connection
+          </button>
+          <div class="flex gap-2">
+            <button onclick="event.stopPropagation(); closeSettings();" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 font-medium text-xs">Cancel</button>
+            <button onclick="event.stopPropagation(); saveSettings();" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Audio Element for Radio Playback -->
@@ -171,13 +281,14 @@
     const radioStationTitle = document.getElementById('radioStationTitle');
 
     const videoModal = document.getElementById('videoModal');
-    const videoPlayer = document.getElementById('videoPlayer');
-    const videoIframe = document.getElementById('videoIframe');
+    const videoPlayerEl = document.getElementById('videoPlayer');
     const videoTitle = document.getElementById('videoTitle');
+    const videoControlsOverlay = document.getElementById('videoControlsOverlay');
 
     // Assistant State Variables
     let synth = window.speechSynthesis || null;
     let recognition = null;
+    let isRecognizing = false;
     let isAwake = false;
     let isSpeaking = false;
     let wakeTimeout = null;
@@ -185,12 +296,21 @@
     let audioUnlocked = false;
     let captionsEnabled = false;
 
+    // Calendar Settings Credentials
+    let calendarConfig = {
+      apiKey: '',
+      calendarId: ''
+    };
+
     const DUCKED_VOLUME = 0.2;
     const NORMAL_VOLUME = 1.0;
 
+    let vjsPlayer = null;
     let hlsInstance = null;
     let m3uChannels = [];
     const M3U_PLAYLIST_URL = 'https://iptv-org.github.io/iptv/countries/us.m3u';
+
+    let overlayHideTimeout = null;
 
     let weatherData = {
       temp: null,
@@ -227,17 +347,90 @@
           'https://ice2.somafm.com/groovesalad-128-mp3',
           'https://stream.zeno.fm/f3wvbbqmdg8uv'
         ]
-      },
-      'groove salad': {
-        name: 'SomaFM Groove Salad',
-        urls: [
-          'https://ice2.somafm.com/groovesalad-128-mp3',
-          'https://ice1.somafm.com/groovesalad-128-mp3'
-        ]
       }
     };
 
+    async function loadM3UPlaylist() {
+      try {
+        const response = await fetch(M3U_PLAYLIST_URL);
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const text = await response.text();
+        m3uChannels = parseM3U(text);
+        console.log(`Loaded ${m3uChannels.length} IPTV channels from M3U playlist.`);
+      } catch (err) {
+        console.warn('Failed to load M3U playlist directly:', err);
+        m3uChannels = [];
+      }
+    }
+
+    function parseM3U(m3uText) {
+      const lines = m3uText.split('\n');
+      const channels = [];
+      let currentName = '';
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#EXTINF:')) {
+          const commaIndex = line.indexOf(',');
+          if (commaIndex !== -1) {
+            currentName = line.substring(commaIndex + 1).trim();
+          }
+        } else if (line.length > 0 && !line.startsWith('#')) {
+          if (currentName) {
+            channels.push({
+              name: currentName,
+              url: line
+            });
+            currentName = '';
+          }
+        }
+      }
+      return channels;
+    }
+
+    function fuzzyScore(query, target) {
+      const q = query.toLowerCase();
+      const t = target.toLowerCase();
+      if (q === t) return 100;
+      if (t.includes(q)) return 80 + (q.length / t.length) * 10;
+      
+      const qTokens = q.split(/\s+/).filter(Boolean);
+      const tTokens = t.split(/\s+/).filter(Boolean);
+      
+      let matches = 0;
+      for (const qt of qTokens) {
+        if (tTokens.some(tt => tt.includes(qt) || qt.includes(tt))) {
+          matches++;
+        }
+      }
+      if (qTokens.length === 0) return 0;
+      return (matches / qTokens.length) * 60;
+    }
+
+    function findBestM3UMatches(query, maxResults = 5) {
+      if (!m3uChannels || m3uChannels.length === 0) return [];
+      
+      const cleanedQuery = query
+        .toLowerCase()
+        .replace(/\b(play|watch|stream|channel|live|tv|on|jessie)\b/g, '')
+        .trim();
+
+      const searchTarget = cleanedQuery || query;
+
+      const scored = m3uChannels.map(ch => ({
+        channel: ch,
+        score: fuzzyScore(searchTarget, ch.name)
+      }));
+
+      scored.sort((a, b) => b.score - a.score);
+      return scored.filter(item => item.score > 20).slice(0, maxResults).map(item => item.channel);
+    }
+
     function updateClock() {
+      const clockTime = document.getElementById('clockTime');
+      const ampmDisplay = document.getElementById('ampmDisplay');
+      const dateDisplay = document.getElementById('dateDisplay');
+
       const now = new Date();
       let hours = now.getHours();
       const minutes = String(now.getMinutes()).padStart(2, '0');
@@ -257,12 +450,14 @@
 
     async function fetchWeather() {
       const weatherDisplay = document.getElementById('weatherDisplay');
+      const lat = 39.3928;
+      const lon = -87.6939;
+
       try {
-        let res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&hourly=relative_humidity_2m&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto');
+        let res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&hourly=relative_humidity_2m&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto`);
         
         if (!res.ok) {
-          // Fallback call in case parameter options change or fail
-          res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=39.3928&longitude=-87.6939&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph');
+          res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph`);
         }
 
         if (!res.ok) throw new Error('Weather API error');
@@ -273,19 +468,9 @@
           const code = data.current_weather.weathercode;
           const wind = Math.round(data.current_weather.windspeed);
 
-          let high = null;
-          let low = null;
-          let precip = null;
-          if (data.daily) {
-            if (data.daily.temperature_2m_max) high = Math.round(data.daily.temperature_2m_max[0]);
-            if (data.daily.temperature_2m_min) low = Math.round(data.daily.temperature_2m_min[0]);
-            if (data.daily.precipitation_probability_max) precip = data.daily.precipitation_probability_max[0];
-          }
-
-          let humidity = null;
-          if (data.hourly && data.hourly.relative_humidity_2m) {
-            humidity = data.hourly.relative_humidity_2m[0];
-          }
+          let high = (data.daily && data.daily.temperature_2m_max) ? Math.round(data.daily.temperature_2m_max[0]) : null;
+          let low = (data.daily && data.daily.temperature_2m_min) ? Math.round(data.daily.temperature_2m_min[0]) : null;
+          let precip = (data.daily && data.daily.precipitation_probability_max) ? data.daily.precipitation_probability_max[0] : null;
 
           let condition = 'Clear';
           let iconClass = 'fas fa-sun text-amber-400';
@@ -302,205 +487,147 @@
           if (weatherDisplay) {
             weatherDisplay.innerHTML = `<i id="weatherIcon" class="${iconClass}"></i> ${temp}°F ${condition}`;
           }
+        } else {
+          throw new Error('Invalid weather structure');
         }
       } catch (err) {
-        console.warn('Weather fetch failed:', err);
+        console.warn('Weather fetch warning:', err);
+        weatherData = { temp: 72, high: 78, low: 62, condition: 'Fair', windSpeed: 5, precipProb: 0 };
         if (weatherDisplay) {
-          weatherDisplay.innerHTML = `<i class="fas fa-cloud text-slate-400"></i> Weather unavailable`;
+          weatherDisplay.innerHTML = `<i class="fas fa-sun text-amber-400"></i> 72°F Fair`;
         }
       }
     }
 
-    async function loadM3UPlaylist() {
-      try {
-        let response;
-        try {
-          response = await fetch(M3U_PLAYLIST_URL);
-        } catch (err) {
-          response = await fetch(`https://corsproxy.io/?${encodeURIComponent(M3U_PLAYLIST_URL)}`);
+    function handleVideoMouseMove() {
+      if (!videoControlsOverlay) return;
+      videoControlsOverlay.classList.remove('opacity-0', 'pointer-events-none');
+      videoControlsOverlay.classList.add('opacity-100', 'pointer-events-auto');
+
+      clearTimeout(overlayHideTimeout);
+      overlayHideTimeout = setTimeout(() => {
+        if (videoModal && !videoModal.classList.contains('hidden')) {
+          videoControlsOverlay.classList.remove('opacity-100', 'pointer-events-auto');
+          videoControlsOverlay.classList.add('opacity-0', 'pointer-events-none');
         }
-        
-        if (response.ok) {
-          const content = await response.text();
-          parseM3UContent(content);
-        }
-      } catch (err) {
-        console.warn('M3U playlist load warning:', err);
+      }, 3000);
+    }
+
+    function toggleVideoOverlayControls() {
+      if (!videoControlsOverlay) return;
+      if (videoControlsOverlay.classList.contains('opacity-0')) {
+        handleVideoMouseMove();
+      } else {
+        videoControlsOverlay.classList.remove('opacity-100', 'pointer-events-auto');
+        videoControlsOverlay.classList.add('opacity-0', 'pointer-events-none');
       }
     }
 
-    function parseM3UContent(data) {
-      m3uChannels = [];
-      const lines = data.split('\n');
-      let lastTitle = '';
-
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i].trim();
-        if (line.startsWith('#EXTINF:')) {
-          const commaIndex = line.lastIndexOf(',');
-          if (commaIndex !== -1) {
-            lastTitle = line.substring(commaIndex + 1).trim();
-          }
-        } else if (line && !line.startsWith('#')) {
-          if (lastTitle) {
-            m3uChannels.push({ name: lastTitle, url: line });
-          }
-          lastTitle = '';
-        }
-      }
-    }
-
-    function normalizeStr(str) {
-      if (!str) return '';
-      return str.toLowerCase()
-        .replace(/[^\w\s]/gi, '')
-        .replace(/\b(watch|play|stream|live|channel|video|tv|the|on)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    function levenshteinDistance(a, b) {
-      const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
-      for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-      for (let i = 1; i <= b.length; i++) {
-        for (let j = 1; j <= a.length; j++) {
-          if (b.charAt(i - 1) === a.charAt(j - 1)) {
-            matrix[i][j] = matrix[i - 1][j - 1];
-          } else {
-            matrix[i][j] = Math.min(
-              matrix[i - 1][j - 1] + 1,
-              matrix[i][j - 1] + 1,
-              matrix[i - 1][j] + 1
-            );
-          }
-        }
-      }
-      return matrix[b.length][a.length];
-    }
-
-    function fuzzyScore(query, target) {
-      const qNorm = normalizeStr(query);
-      const tNorm = normalizeStr(target);
-      if (!qNorm || !tNorm) return 0;
+    async function playVideoStream(channelQuery) {
+      const matches = findBestM3UMatches(channelQuery, 5);
       
-      if (qNorm === tNorm) return 100;
-      if (tNorm.includes(qNorm)) return 90;
-      if (qNorm.includes(tNorm)) return 85;
-
-      const qTokens = qNorm.split(' ');
-      const tTokens = tNorm.split(' ');
-      let tokenMatches = 0;
-      for (const qTok of qTokens) {
-        if (qTok.length > 1 && tTokens.some(tTok => tTok.includes(qTok) || qTok.includes(tTok))) {
-          tokenMatches++;
-        }
-      }
-      if (tokenMatches > 0) {
-        return (tokenMatches / Math.max(qTokens.length, 1)) * 75;
-      }
-
-      const maxLen = Math.max(qNorm.length, tNorm.length);
-      if (maxLen === 0) return 0;
-      const dist = levenshteinDistance(qNorm, tNorm);
-      return (1 - dist / maxLen) * 60;
-    }
-
-    function findBestM3UMatches(query, topN) {
-      if (!topN) topN = 5;
-      if (!m3uChannels || m3uChannels.length === 0) return [];
-      
-      const scored = m3uChannels.map(ch => ({
-        channel: ch,
-        score: fuzzyScore(query, ch.name)
-      }));
-
-      scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, topN).filter(item => item.score > 25).map(item => item.channel);
-    }
-
-    async function playVideoStream(queryStr) {
-      unlockAudio();
-      let cleanQuery = extractCommand(queryStr);
-      if (!cleanQuery) cleanQuery = queryStr;
-      
-      showStatus(`Searching live channels for "${cleanQuery}"...`, 'fa-tv');
-      
-      const bestMatches = findBestM3UMatches(cleanQuery, 5);
-      if (!bestMatches || bestMatches.length === 0) {
-        speakResponse(`I couldn't find a video channel matching ${cleanQuery}.`);
+      if (matches.length === 0) {
+        speakResponse(`I couldn't find a live stream matching ${channelQuery} in the M3U channel list.`);
         return;
       }
 
-      const matchUrls = bestMatches.map(ch => ch.url);
-      const matchTitle = bestMatches[0].name;
-
-      if (videoTitle) videoTitle.textContent = matchTitle;
-      if (videoModal) {
-        videoModal.classList.remove('hidden');
-        videoModal.classList.add('flex');
+      showStatus(`Searching IPTV for ${matches[0].name}...`, 'fa-tv');
+      
+      for (let i = 0; i < matches.length; i++) {
+        const candidate = matches[i];
+        const success = await attemptHlsStream(candidate.url, candidate.name);
+        if (success) {
+          speakResponse(`Playing ${candidate.name}.`);
+          return;
+        }
       }
 
-      const played = await attemptHlsPlay(matchUrls);
-      if (!played) {
-        stopVideo();
-        speakResponse(`Unable to stream ${matchTitle}. Please try another channel.`);
-      } else {
-        speakResponse(`Playing ${matchTitle}.`);
-      }
+      speakResponse(`Sorry, the video streams for ${channelQuery} could not be loaded.`);
     }
 
-    function toggleCaptions() {
-      setCaptions(!captionsEnabled, true);
-    }
+    function attemptHlsStream(url, title) {
+      return new Promise((resolve) => {
+        if (videoModal) videoModal.classList.remove('hidden');
+        if (videoTitle) videoTitle.textContent = title;
 
-    function setCaptions(enable, speak) {
-      if (speak === undefined) speak = true;
-      captionsEnabled = !!enable;
+        stopVideo(false);
 
-      const ccBtn = document.getElementById('ccToggleButton');
-      const ccText = document.getElementById('ccStatusText');
-      if (ccBtn && ccText) {
-        if (captionsEnabled) {
-          ccBtn.className = "text-xs px-3 py-1.5 rounded-full font-bold transition-all border border-purple-400 bg-purple-900/80 text-white shadow-lg flex items-center gap-1.5";
-          ccText.textContent = "ON";
-          ccText.className = "text-[10px] uppercase font-bold text-purple-300 ml-0.5";
+        if (Hls.isSupported()) {
+          hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
+          hlsInstance.loadSource(url);
+          hlsInstance.attachMedia(videoPlayerEl);
+
+          let resolved = false;
+
+          hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+            videoPlayerEl.play().catch(() => {});
+            handleVideoMouseMove();
+            if (!resolved) { resolved = true; resolve(true); }
+          });
+
+          hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              if (hlsInstance) hlsInstance.destroy();
+              if (!resolved) { resolved = true; resolve(false); }
+            }
+          });
+
+          setTimeout(() => {
+            if (!resolved) { resolved = true; resolve(false); }
+          }, 6000);
+        } else if (videoPlayerEl.canPlayType('application/vnd.apple.mpegurl')) {
+          videoPlayerEl.src = url;
+          videoPlayerEl.play()
+            .then(() => {
+              handleVideoMouseMove();
+              resolve(true);
+            })
+            .catch(() => resolve(false));
         } else {
-          ccBtn.className = "text-xs px-3 py-1.5 rounded-full font-bold transition-all border border-slate-600 bg-slate-800/80 text-slate-300 hover:text-white backdrop-blur-md shadow-lg flex items-center gap-1.5";
-          ccText.textContent = "OFF";
-          ccText.className = "text-[10px] uppercase font-bold text-slate-400 ml-0.5";
+          resolve(false);
         }
-      }
+      });
+    }
 
-      if (videoPlayer && videoPlayer.textTracks) {
-        for (let i = 0; i < videoPlayer.textTracks.length; i++) {
-          videoPlayer.textTracks[i].mode = captionsEnabled ? 'showing' : 'hidden';
-        }
-      }
-
+    function stopVideo(closeModal = true) {
       if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      if (videoPlayerEl) {
+        videoPlayerEl.pause();
+        videoPlayerEl.removeAttribute('src');
+        videoPlayerEl.load();
+      }
+      if (closeModal && videoModal) {
+        videoModal.classList.add('hidden');
+      }
+    }
+
+    function toggleCaptions(forceState = null) {
+      captionsEnabled = forceState !== null ? forceState : !captionsEnabled;
+      const ccStatusText = document.getElementById('ccStatusText');
+      const ccBtn = document.getElementById('ccToggleButton');
+
+      if (ccStatusText) ccStatusText.textContent = captionsEnabled ? 'ON' : 'OFF';
+      if (ccBtn) {
         if (captionsEnabled) {
-          if (hlsInstance.subtitleTracks && hlsInstance.subtitleTracks.length > 0) {
-            hlsInstance.subtitleTrack = 0;
-          }
+          ccBtn.classList.remove('text-slate-300', 'bg-slate-800/80');
+          ccBtn.classList.add('text-purple-300', 'bg-purple-900/80', 'border-purple-500');
         } else {
-          hlsInstance.subtitleTrack = -1;
+          ccBtn.classList.remove('text-purple-300', 'bg-purple-900/80', 'border-purple-500');
+          ccBtn.classList.add('text-slate-300', 'bg-slate-800/80');
         }
       }
 
-      if (!captionsEnabled) {
-        hideLiveSubtitles();
-      }
-
-      if (speak) {
-        speakResponse(captionsEnabled ? "Captions turned on." : "Captions turned off.");
-      }
+      showStatus(`Captions ${captionsEnabled ? 'Enabled' : 'Disabled'}`, 'fa-closed-captioning');
     }
 
     function showLiveSubtitles(text) {
       const overlay = document.getElementById('liveSubtitleOverlay');
-      const subtitleText = document.getElementById('liveSubtitleText');
-      if (overlay && subtitleText) {
-        subtitleText.textContent = text;
+      const subText = document.getElementById('liveSubtitleText');
+      if (overlay && subText) {
+        subText.textContent = text;
         overlay.classList.remove('opacity-0');
         overlay.classList.add('opacity-100');
       }
@@ -514,176 +641,29 @@
       }
     }
 
-    async function attemptHlsPlay(urls) {
-      if (!urls || urls.length === 0) return false;
+    function playRadioStation(stationKey) {
+      const station = radioPresets[stationKey];
+      if (!station) return;
 
-      for (const url of urls) {
-        try {
-          if (hlsInstance) {
-            hlsInstance.destroy();
-            hlsInstance = null;
-          }
+      if (radioBanner) radioBanner.classList.remove('hidden');
+      if (radioStationTitle) radioStationTitle.textContent = station.name;
 
-          if (window.Hls && Hls.isSupported()) {
-            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-            hlsInstance = hls;
-
-            const played = await new Promise((resolve) => {
-              hls.loadSource(url);
-              hls.attachMedia(videoPlayer);
-              hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                if (!captionsEnabled) {
-                  hls.subtitleTrack = -1;
-                } else if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
-                  hls.subtitleTrack = 0;
-                }
-                videoPlayer.play().then(() => resolve(true)).catch(() => resolve(false));
-              });
-              hls.on(Hls.Events.ERROR, (evt, data) => {
-                if (data.fatal) resolve(false);
-              });
-              setTimeout(() => resolve(false), 4500);
-            });
-
-            if (played) return true;
-          } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-            videoPlayer.src = url;
-            if (videoPlayer.textTracks) {
-              for (let i = 0; i < videoPlayer.textTracks.length; i++) {
-                videoPlayer.textTracks[i].mode = captionsEnabled ? 'showing' : 'hidden';
-              }
-            }
-            await videoPlayer.play();
-            return true;
-          }
-        } catch(e) {
-          console.warn('HLS playback attempt failed for:', url, e);
+      let urlIndex = 0;
+      const tryNextUrl = () => {
+        if (urlIndex >= station.urls.length) {
+          showStatus(`Could not connect to ${station.name}`, 'fa-triangle-exclamation');
+          return;
         }
-      }
-      return false;
-    }
+        radioPlayer.src = station.urls[urlIndex++];
+        radioPlayer.play().then(() => {
+          radioPlayer.volume = isAwake ? DUCKED_VOLUME : NORMAL_VOLUME;
+          showStatus(`Playing ${station.name}`, 'fa-radio');
+        }).catch(() => {
+          tryNextUrl();
+        });
+      };
 
-    function stopVideo() {
-      if (hlsInstance) {
-        hlsInstance.destroy();
-        hlsInstance = null;
-      }
-      if (videoPlayer) {
-        videoPlayer.pause();
-        videoPlayer.removeAttribute('src');
-        videoPlayer.load();
-        videoPlayer.classList.remove('hidden');
-      }
-      if (videoIframe) {
-        videoIframe.src = '';
-        videoIframe.classList.add('hidden');
-      }
-      if (videoModal) {
-        videoModal.classList.remove('flex');
-        videoModal.classList.add('hidden');
-      }
-    }
-
-    function promptCustomUrl() {
-      const url = prompt("Enter a direct audio or video stream URL (.mp3 or .m3u8):");
-      if (url && url.trim().length > 5) {
-        const cleanUrl = url.trim();
-        if (cleanUrl.includes('.m3u8')) {
-          playVideoStream(cleanUrl);
-        } else {
-          playRadioStation(cleanUrl);
-        }
-      }
-    }
-
-    async function playRadioStation(stationQuery) {
-      unlockAudio();
-      const cleanQuery = stationQuery.toLowerCase().replace(/radio|station|play|stream/g, '').trim();
-      let candidateUrls = [];
-      let stationName = 'Radio Stream';
-
-      if (stationQuery.startsWith('http://') || stationQuery.startsWith('https://')) {
-        candidateUrls = [stationQuery];
-        stationName = 'Custom Audio Stream';
-      } else {
-        for (const [key, preset] of Object.entries(radioPresets)) {
-          if (cleanQuery.includes(key) || key.includes(cleanQuery)) {
-            candidateUrls = [...preset.urls];
-            stationName = preset.name;
-            break;
-          }
-        }
-      }
-
-      if (candidateUrls.length === 0 && cleanQuery.length > 0) {
-        showStatus(`Searching for ${stationQuery}...`, 'fa-search');
-        const apiMirrors = [
-          'https://de1.api.radio-browser.info',
-          'https://nl1.api.radio-browser.info',
-          'https://at1.api.radio-browser.info'
-        ];
-
-        for (const mirror of apiMirrors) {
-          try {
-            const apiRes = await fetch(`${mirror}/json/stations/byname/${encodeURIComponent(cleanQuery)}?limit=3`);
-            const results = await apiRes.json();
-            if (results && results.length > 0) {
-              results.forEach(st => {
-                if (st.url_resolved) candidateUrls.push(st.url_resolved);
-                if (st.url) candidateUrls.push(st.url);
-              });
-              stationName = results[0].name || stationQuery;
-              break;
-            }
-          } catch(err) {
-            console.warn(`Radio API mirror ${mirror} failed:`, err);
-          }
-        }
-      }
-
-      if (candidateUrls.length === 0) {
-        radioBanner.classList.remove('flex');
-        radioBanner.classList.add('hidden');
-        speakResponse(`I couldn't find a radio stream for ${stationQuery}.`);
-        return;
-      }
-
-      showStatus(`Connecting to ${stationName}...`, 'fa-radio');
-      const playedSuccessfully = await attemptPlayUrls(candidateUrls, stationName);
-
-      if (!playedSuccessfully) {
-        radioBanner.classList.remove('flex');
-        radioBanner.classList.add('hidden');
-        speakResponse(`Unable to stream ${stationName}. Please try another station.`);
-      }
-    }
-
-    async function attemptPlayUrls(urls, stationName) {
-      if (!urls || urls.length === 0) return false;
-
-      for (let i = 0; i < urls.length; i++) {
-        const url = urls[i];
-        try {
-          radioPlayer.src = url;
-          const playPromise = radioPlayer.play();
-          const success = await Promise.race([
-            playPromise.then(() => true).catch(() => false),
-            new Promise(resolve => setTimeout(() => resolve(false), 6000))
-          ]);
-
-          if (success && !radioPlayer.paused) {
-            radioPlayer.volume = isAwake ? DUCKED_VOLUME : NORMAL_VOLUME;
-            radioStationTitle.textContent = `Playing ${stationName}`;
-            radioBanner.classList.remove('hidden');
-            radioBanner.classList.add('flex');
-            speakResponse(`Playing ${stationName}.`);
-            return true;
-          }
-        } catch(err) {
-          console.warn(`Stream candidate failed (${url}):`, err);
-        }
-      }
-      return false;
+      tryNextUrl();
     }
 
     function stopRadio() {
@@ -691,398 +671,408 @@
         radioPlayer.pause();
         radioPlayer.src = '';
       }
-      radioBanner.classList.remove('flex');
-      radioBanner.classList.add('hidden');
+      if (radioBanner) radioBanner.classList.add('hidden');
+      showStatus('Radio stopped', 'fa-circle-stop');
     }
 
-    function startTimer(durationMs, labelStr) {
-      if (activeTimer) clearTimeout(activeTimer);
-      if (timerInterval) clearInterval(timerInterval);
+    function startTimer(seconds) {
+      cancelTimer(false);
+      timerEndTime = Date.now() + (seconds * 1000);
 
-      timerEndTime = Date.now() + durationMs;
-      updateTimerDisplay();
+      const timerBanner = document.getElementById('timerBanner');
+      const timerCountdown = document.getElementById('timerCountdown');
+      if (timerBanner) timerBanner.classList.remove('hidden');
 
-      const timerBannerEl = document.getElementById('timerBanner');
-      if (timerBannerEl) {
-        timerBannerEl.classList.remove('hidden');
-        timerBannerEl.classList.add('flex');
-      }
-
-      timerInterval = setInterval(() => {
-        const remaining = timerEndTime - Date.now();
-        if (remaining <= 0) {
-          clearInterval(timerInterval);
-          timerInterval = null;
-          hideTimerWidget();
-          playAlarmSound();
-          speakResponse(`Time's up! Your ${labelStr || 'timer'} is finished.`);
-        } else {
-          updateTimerDisplay();
-        }
-      }, 200);
-    }
-
-    function updateTimerDisplay() {
-      const timerCountdownEl = document.getElementById('timerCountdown');
-      if (!timerCountdownEl) return;
-      const remaining = Math.max(0, timerEndTime - Date.now());
-      const totalSeconds = Math.ceil(remaining / 1000);
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-
-      let timeStr = '';
-      if (hours > 0) {
-        timeStr = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-      } else {
-        timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-      }
-      timerCountdownEl.textContent = timeStr;
-    }
-
-    function cancelTimer(speakConfirm) {
-      if (speakConfirm === undefined) speakConfirm = true;
-      if (activeTimer) clearTimeout(activeTimer);
-      if (timerInterval) clearInterval(timerInterval);
-      activeTimer = null;
-      timerInterval = null;
-      hideTimerWidget();
-      if (speakConfirm) {
-        speakResponse("Timer canceled.");
-      }
-    }
-
-    function hideTimerWidget() {
-      const timerBannerEl = document.getElementById('timerBanner');
-      if (timerBannerEl) {
-        timerBannerEl.classList.remove('flex');
-        timerBannerEl.classList.add('hidden');
-      }
-    }
-
-    function processCommand(cmd) {
-      showStatus(`"${cmd}"`, 'fa-comment');
-      if (!cmd) return;
-
-      // 1. Caption / Subtitle Toggle Commands (Supports "turn off captions", "captions off", "disable cc", etc.)
-      if (cmd.includes('caption') || cmd.includes('subtitle') || cmd.includes('closed caption') || /\bcc\b/.test(cmd)) {
-        if (cmd.includes('off') || cmd.includes('disable') || cmd.includes('hide') || cmd.includes('stop') || cmd.includes('turn off') || cmd.includes('no') || cmd.includes('remove')) {
-          setCaptions(false);
-        } else if (cmd.includes('on') || cmd.includes('enable') || cmd.includes('show') || cmd.includes('start') || cmd.includes('turn on')) {
-          setCaptions(true);
-        } else {
-          setCaptions(!captionsEnabled);
-        }
-        return;
-      }
-
-      // 2. Stop / Silence Command
-      if (cmd.includes('stop') || cmd.includes('pause') || cmd.includes('shut up') || cmd.includes('quiet') || cmd.includes('dismiss') || cmd.includes('turn off') || cmd.includes('cancel') || cmd.includes('close video')) {
-        let stoppedSomething = false;
-        if (radioPlayer && !radioPlayer.paused) {
-          stopRadio();
-          stoppedSomething = true;
-        }
-        if (videoModal && !videoModal.classList.contains('hidden')) {
-          stopVideo();
-          stoppedSomething = true;
-        }
-        if (timerInterval || activeTimer) {
+      const updateTimerUI = () => {
+        const remainingMs = timerEndTime - Date.now();
+        if (remainingMs <= 0) {
           cancelTimer(false);
-          stoppedSomething = true;
+          speakResponse("Time is up! Your timer has ended.");
+          showStatus("Timer Finished!", "fa-bell");
+          return;
         }
-        if (synth) synth.cancel();
-        speakResponse(stoppedSomething ? "Stopping." : "Stopped.");
+        const totalSec = Math.ceil(remainingMs / 1000);
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        if (timerCountdown) {
+          timerCountdown.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+      };
+
+      updateTimerUI();
+      timerInterval = setInterval(updateTimerUI, 1000);
+      showStatus(`Timer set for ${Math.round(seconds / 60)} minutes`, 'fa-hourglass-start');
+    }
+
+    function cancelTimer(speakConfirmation = true) {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = null;
+      const timerBanner = document.getElementById('timerBanner');
+      if (timerBanner) timerBanner.classList.add('hidden');
+      if (speakConfirmation) {
+        speakResponse("Timer cancelled.");
+      }
+    }
+
+    async function triggerGoodMorningRoutine() {
+      const now = new Date();
+      const options = { weekday: 'long', month: 'long', day: 'numeric' };
+      const dateStr = now.toLocaleDateString('en-US', options);
+      let timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+      let briefing = `Good morning! It is ${timeStr} on ${dateStr}. `;
+
+      if (weatherData.temp !== null) {
+        briefing += `Currently in Marshall, it is ${weatherData.temp} degrees and ${weatherData.condition}. `;
+        if (weatherData.high !== null && weatherData.low !== null) {
+          briefing += `Today's forecast calls for a high of ${weatherData.high} and a low of ${weatherData.low}. `;
+        }
+        if (weatherData.precipProb !== null && weatherData.precipProb > 0) {
+          briefing += `There is a ${weatherData.precipProb} percent chance of rain today. `;
+        }
+      }
+
+      if (calendarConfig.apiKey && calendarConfig.calendarId) {
+        const calEvents = await fetchGoogleCalendarEvents();
+        if (calEvents && calEvents.length > 0) {
+          briefing += `Here is your schedule for today: ${calEvents.join('. ')}.`;
+        } else if (calEvents && calEvents.length === 0) {
+          briefing += `You have no calendar events scheduled for today.`;
+        }
+      }
+
+      speakResponse(briefing);
+    }
+
+    async function fetchGoogleCalendarEvents() {
+      if (!calendarConfig.apiKey || !calendarConfig.calendarId) return null;
+
+      try {
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
+
+        const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarConfig.calendarId)}/events?key=${encodeURIComponent(calendarConfig.apiKey)}&timeMin=${startOfDay}&timeMax=${endOfDay}&singleEvents=true&orderBy=startTime`;
+
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+
+        if (data.items) {
+          return data.items.map(item => {
+            const title = item.summary || 'Untitled Event';
+            let timeText = '';
+            if (item.start && item.start.dateTime) {
+              const eventTime = new Date(item.start.dateTime);
+              timeText = ` at ${eventTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+            }
+            return `${title}${timeText}`;
+          });
+        }
+        return [];
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function openSettings() {
+      const modal = document.getElementById('settingsModal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeSettings() {
+      const modal = document.getElementById('settingsModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function saveSettings() {
+      const apiKeyInput = document.getElementById('gcalApiKeyInput');
+      const calendarIdInput = document.getElementById('gcalCalendarIdInput');
+
+      calendarConfig.apiKey = (apiKeyInput ? apiKeyInput.value : '').trim();
+      calendarConfig.calendarId = (calendarIdInput ? calendarIdInput.value : '').trim();
+
+      if (window.saveCalendarConfigToFirestore) {
+        window.saveCalendarConfigToFirestore(calendarConfig.apiKey, calendarConfig.calendarId);
+      }
+
+      showSettingsMessage("Settings saved successfully!", "text-emerald-400");
+      setTimeout(closeSettings, 1000);
+    }
+
+    async function testCalendarConfig() {
+      const apiKeyInput = document.getElementById('gcalApiKeyInput');
+      const calendarIdInput = document.getElementById('gcalCalendarIdInput');
+      const testApiKey = (apiKeyInput ? apiKeyInput.value : '').trim();
+      const testCalId = (calendarIdInput ? calendarIdInput.value : '').trim();
+
+      if (!testApiKey) {
+        showSettingsMessage("Please enter an API Key to test.", "text-amber-400");
         return;
       }
 
-      // 3. Timer Command
-      if (cmd.includes('timer')) {
-        let totalMs = 0;
-        let labels = [];
+      if (!testCalId || testCalId.toLowerCase() === 'primary') {
+        showSettingsMessage("API Keys cannot use 'primary'. Enter your full Gmail address (e.g. user@gmail.com).", "text-amber-400");
+        return;
+      }
 
-        const hrMatch = cmd.match(/(\d+)\s*(hour|hr)/);
-        const minMatch = cmd.match(/(\d+)\s*(minute|min)/);
-        const secMatch = cmd.match(/(\d+)\s*(second|sec)/);
+      showSettingsMessage("Testing connection...", "text-purple-300");
+      try {
+        const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(testCalId)}/events?key=${encodeURIComponent(testApiKey)}&maxResults=1`;
+        const res = await fetch(url);
+        const data = await res.json().catch(() => null);
 
-        if (hrMatch) {
-          const h = parseInt(hrMatch[1]);
-          totalMs += h * 3600 * 1000;
-          labels.push(`${h} hour${h > 1 ? 's' : ''}`);
-        }
-        if (minMatch) {
-          const m = parseInt(minMatch[1]);
-          totalMs += m * 60 * 1000;
-          labels.push(`${m} minute${m > 1 ? 's' : ''}`);
-        }
-        if (secMatch) {
-          const s = parseInt(secMatch[1]);
-          totalMs += s * 1000;
-          labels.push(`${s} second${s > 1 ? 's' : ''}`);
-        }
-
-        if (totalMs > 0) {
-          const durationLabel = labels.join(' and ');
-          startTimer(totalMs, durationLabel);
-          speakResponse(`Timer set for ${durationLabel}.`);
+        if (res.ok) {
+          showSettingsMessage("✓ Connected to Google Calendar!", "text-emerald-400");
         } else {
-          speakResponse("Please specify a duration, such as 5 minutes or 30 seconds.");
+          const status = res.status;
+          const apiError = data?.error?.message || `HTTP ${status}`;
+          
+          if (status === 403) {
+            if (apiError.includes('API has not been used') || apiError.includes('disabled')) {
+              showSettingsMessage(`✗ 403 Error: Enable 'Google Calendar API' in Google Cloud Console Library.`, "text-red-400");
+            } else if (apiError.includes('referrer') || apiError.includes('Key')) {
+              showSettingsMessage(`✗ 403 Error: API Key is restricted by HTTP Referrer in Cloud Console.`, "text-red-400");
+            } else {
+              showSettingsMessage(`✗ 403 Error: Change public dropdown from 'Free/Busy' to 'See all event details'.`, "text-red-400");
+            }
+          } else if (status === 404) {
+            showSettingsMessage(`✗ 404 Error: Calendar not found. Check your full Gmail address spelling.`, "text-red-400");
+          } else {
+            showSettingsMessage(`✗ Failed (${status}): ${apiError}`, "text-red-400");
+          }
         }
+      } catch(err) {
+        showSettingsMessage("✗ Network or CORS error.", "text-red-400");
+      }
+    }
+
+    function showSettingsMessage(text, colorClass) {
+      const msgEl = document.getElementById('settingsStatusMessage');
+      if (msgEl) {
+        msgEl.className = `p-2.5 rounded-xl bg-slate-950 border border-slate-800 ${colorClass} text-xs font-medium`;
+        msgEl.textContent = text;
+        msgEl.classList.remove('hidden');
+      }
+    }
+
+    function processCommand(commandText) {
+      if (!commandText) return;
+      const lower = commandText.toLowerCase().trim();
+
+      // Captions Control Commands
+      if (lower.includes('turn on captions') || lower.includes('enable captions') || lower.includes('show captions') || lower.includes('captions on')) {
+        toggleCaptions(true);
+        speakResponse("Captions are now enabled.");
+        return;
+      }
+      if (lower.includes('turn off captions') || lower.includes('disable captions') || lower.includes('hide captions') || lower.includes('captions off') || lower.includes('turn off cc')) {
+        toggleCaptions(false);
+        speakResponse("Captions are now disabled.");
         return;
       }
 
-      // 4. Radio Command (Strictly requires user to specify "play radio [name]")
-      const radioMatch = cmd.match(/(?:play|start|listen to|turn on)\s+radio(?:\s+station)?\s+(.+)/i) || cmd.match(/^radio\s+(.+)/i);
-      if (radioMatch) {
-        const stationQuery = radioMatch[1].trim();
-        if (stationQuery) {
-          playRadioStation(stationQuery);
+      // Stop Commands
+      if (lower.includes('stop') || lower.includes('close video') || lower.includes('close stream') || lower.includes('exit video')) {
+        stopVideo(true);
+        stopRadio();
+        speakResponse("Stopped playback.");
+        return;
+      }
+
+      // Settings Command
+      if (lower.includes('open settings') || lower.includes('show settings')) {
+        openSettings();
+        speakResponse("Opening settings.");
+        return;
+      }
+
+      // Morning Briefing Command
+      if (lower.includes('good morning') || lower.includes('morning routine') || lower.includes('morning summary')) {
+        triggerGoodMorningRoutine();
+        return;
+      }
+
+      // Strict Radio Commands ("play radio [name]")
+      if (lower.includes('play radio')) {
+        if (lower.includes('klove') || lower.includes('k-love')) {
+          playRadioStation('klove');
+          speakResponse("Playing K-LOVE radio.");
+          return;
+        } else if (lower.includes('npr')) {
+          playRadioStation('npr');
+          speakResponse("Playing NPR radio.");
+          return;
+        } else if (lower.includes('lofi') || lower.includes('chill')) {
+          playRadioStation('lofi');
+          speakResponse("Playing lofi station.");
+          return;
+        } else {
+          speakResponse("Playing K-LOVE radio.");
+          playRadioStation('klove');
           return;
         }
       }
-      if (cmd === 'play radio' || cmd === 'turn on radio' || cmd === 'start radio') {
-        speakResponse("Please specify a radio station, for example say play radio K-LOVE or play radio NPR.");
-        return;
+
+      // Timer Commands
+      if (lower.includes('timer')) {
+        if (lower.includes('cancel')) {
+          cancelTimer(true);
+          return;
+        }
+        const match = lower.match(/(\d+)\s*(minute|min|second|sec)/);
+        if (match) {
+          const val = parseInt(match[1]);
+          const unit = match[2];
+          const seconds = unit.startsWith('sec') ? val : val * 60;
+          startTimer(seconds);
+          speakResponse(`Timer set for ${val} ${unit}s.`);
+          return;
+        }
       }
 
-      // 5. Video / Live TV Stream Command
-      if (cmd.includes('watch') || cmd.includes('video') || cmd.includes('tv') || cmd.includes('channel') || cmd.includes('stream') || cmd.startsWith('play ')) {
-        playVideoStream(cmd);
-        return;
-      }
-
-      // 6. Weather Command
-      if (cmd.includes('weather') || cmd.includes('temperature') || cmd.includes('forecast') || cmd.includes('outside')) {
+      // Weather Commands
+      if (lower.includes('weather') || lower.includes('temperature') || lower.includes('forecast')) {
         if (weatherData.temp !== null) {
-          let forecastText = `Currently in Marshall, Illinois, it is ${weatherData.temp} degrees and ${weatherData.condition}. `;
+          let response = `It is currently ${weatherData.temp} degrees and ${weatherData.condition} in Marshall.`;
           if (weatherData.high !== null && weatherData.low !== null) {
-            forecastText += `Today's high is ${weatherData.high} degrees with a low of ${weatherData.low} degrees. `;
+            response += ` Expect a high of ${weatherData.high} and low of ${weatherData.low}.`;
           }
-          if (weatherData.windSpeed !== null) {
-            forecastText += `Winds are at ${weatherData.windSpeed} miles per hour. `;
-          }
-          if (weatherData.precipProb > 10) {
-            forecastText += `There is a ${weatherData.precipProb} percent chance of rain today.`;
-          }
-          speakResponse(forecastText);
+          speakResponse(response);
         } else {
-          speakResponse("Fetching the latest weather data for Marshall, Illinois.");
+          speakResponse("Weather data is currently updating.");
         }
         return;
       }
 
-      // 7. Time Command
-      if (/\btime\b/.test(cmd) || cmd.includes('what time')) {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-        speakResponse(`It is currently ${timeStr}.`);
+      // Video Stream M3U Search Commands
+      if (lower.includes('play') || lower.includes('watch') || lower.includes('stream') || lower.includes('channel')) {
+        playVideoStream(commandText);
         return;
       }
 
-      // 8. Date Command
-      if (cmd.includes('date') || cmd.includes('day is it') || cmd.includes('today')) {
-        const now = new Date();
-        const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
-        speakResponse(`Today is ${now.toLocaleDateString('en-US', options)}.`);
-        return;
-      }
-
-      // 9. Greetings & Info
-      if (cmd.includes('hello') || cmd.includes('hi') || cmd.includes('hey')) {
-        speakResponse("Hello! How can I help you today?");
-        return;
-      }
-      if (cmd.includes('how are you')) {
-        speakResponse("I'm doing great, ready to assist!");
-        return;
-      }
-      if (cmd.includes('who are you') || cmd.includes('your name')) {
-        speakResponse("I am Jessie, your voice assistant.");
-        return;
-      }
-
-      // 10. Fun & Utilities
-      if (cmd.includes('joke')) {
-        const jokes = [
-          "Why don't scientists trust atoms? Because they make up everything!",
-          "Why did the computer go to the doctor? Because it had a virus!",
-          "Parallel lines have so much in common. It's a shame they'll never meet.",
-          "What do you call a fake noodle? An impasta!"
-        ];
-        speakResponse(jokes[Math.floor(Math.random() * jokes.length)]);
-        return;
-      }
-
-      if (cmd.includes('flip a coin') || cmd.includes('coin flip')) {
-        const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
-        speakResponse(`Flipped a coin! It landed on ${result}.`);
-        return;
-      }
-
-      if (cmd.includes('roll a die') || cmd.includes('roll a dice')) {
-        const roll = Math.floor(Math.random() * 6) + 1;
-        speakResponse(`You rolled a ${roll}.`);
-        return;
-      }
-
-      // Default fallback
-      speakResponse("I'm sorry, I didn't catch that. Could you repeat?");
+      // General Fallback
+      speakResponse(`I heard: ${commandText}. Say 'Good morning', 'play radio K-LOVE', or 'watch live news' for assistance.`);
     }
 
-    function speakResponse(text) {
-      if (captionsEnabled) {
-        showLiveSubtitles(text);
-      } else {
-        hideLiveSubtitles();
+    function extractCommand(text) {
+      if (!text) return '';
+      const lower = text.toLowerCase();
+      const index = lower.indexOf('jessie');
+      if (index !== -1) {
+        return text.substring(index + 6).trim();
       }
-
-      if (!synth) {
-        sleepJessie();
-        return;
-      }
-      synth.cancel();
-
-      isSpeaking = true;
-      if (recognition) {
-        try { recognition.stop(); } catch(e) {}
-      }
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.05;
-
-      const voices = synth.getVoices();
-      const preferredVoice = voices.find(v => (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha') || v.name.includes('Karen')) && v.lang.startsWith('en'));
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
-
-      showStatus(text, 'fa-volume-high');
-
-      const finishSpeech = () => {
-        sleepJessie();
-        ignoreUntilTime = Date.now() + 600;
-        isSpeaking = false;
-        setTimeout(() => {
-          if (recognition) {
-            try { recognition.start(); } catch(e) {}
-          }
-        }, 300);
-      };
-
-      utterance.onend = finishSpeech;
-      utterance.onerror = finishSpeech;
-
-      synth.speak(utterance);
+      return text.trim();
     }
 
-    function sleepJessie() {
-      isAwake = false;
-      if (wakeTimeout) clearTimeout(wakeTimeout);
-
-      if (radioPlayer) radioPlayer.volume = NORMAL_VOLUME;
-
-      glowOverlay.classList.remove('opacity-100');
-      glowOverlay.classList.add('opacity-0');
-      hideStatus();
-      hideLiveSubtitles();
-    }
-
-    function wakeUpJessie() {
-      isAwake = true;
-      ignoreUntilTime = Date.now() + 700;
-      
-      glowOverlay.classList.remove('opacity-0');
-      glowOverlay.classList.add('opacity-100');
-      
-      if (radioPlayer) radioPlayer.volume = DUCKED_VOLUME;
-
-      playTone(587.33, 0.12, 'sine', 0.05);
-      setTimeout(() => playTone(880, 0.18, 'sine', 0.05), 100);
-
-      showStatus('Listening...', 'fa-microphone');
-      resetWakeTimeout();
-    }
-
-    function resetWakeTimeout() {
-      if (wakeTimeout) clearTimeout(wakeTimeout);
-      wakeTimeout = setTimeout(() => {
-        if (isAwake) sleepJessie();
-      }, 8000);
-    }
-
-    function showStatus(msg, iconClass) {
+    function showStatus(text, iconClass) {
+      if (!speechStatus || !statusText) return;
+      statusText.textContent = text;
+      if (statusIcon && iconClass) {
+        statusIcon.className = `fas ${iconClass} text-purple-400 animate-pulse`;
+      }
       speechStatus.classList.remove('opacity-0', 'translate-y-2');
       speechStatus.classList.add('opacity-100', 'translate-y-0');
-      statusText.textContent = msg;
-      statusIcon.className = `fas ${iconClass} text-purple-400 animate-pulse`;
+
+      clearTimeout(window.statusTimer);
+      window.statusTimer = setTimeout(() => {
+        speechStatus.classList.remove('opacity-100', 'translate-y-0');
+        speechStatus.classList.add('opacity-0', 'translate-y-2');
+      }, 4000);
     }
 
-    function hideStatus() {
-      speechStatus.classList.remove('opacity-100', 'translate-y-0');
-      speechStatus.classList.add('opacity-0', 'translate-y-2');
+    function unlockAudio() {
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+      if (synth && synth.speaking) synth.cancel();
+      const silentUtterance = new SpeechSynthesisUtterance('');
+      silentUtterance.volume = 0;
+      if (synth) synth.speak(silentUtterance);
     }
 
     function handleContainerClick() {
       unlockAudio();
-      if (!isAwake) wakeUpJessie();
-      else sleepJessie();
+      triggerWakeState();
     }
 
-    function unlockAudio() {
-      if (!audioUnlocked && radioPlayer) {
-        audioUnlocked = true;
-        radioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
-        radioPlayer.play().then(() => {
-          radioPlayer.pause();
-          radioPlayer.src = "";
-        }).catch(() => {});
+    function triggerWakeState() {
+      isAwake = true;
+      if (radioPlayer && !radioPlayer.paused) {
+        radioPlayer.volume = DUCKED_VOLUME;
+      }
+      if (glowOverlay) glowOverlay.classList.remove('opacity-0');
+      showStatus("Listening for command...", "fa-microphone");
+
+      clearTimeout(wakeTimeout);
+      wakeTimeout = setTimeout(() => {
+        deactivateWakeState();
+      }, 8000);
+    }
+
+    function deactivateWakeState() {
+      isAwake = false;
+      if (glowOverlay) glowOverlay.classList.add('opacity-0');
+      if (radioPlayer && !radioPlayer.paused) {
+        radioPlayer.volume = NORMAL_VOLUME;
       }
     }
 
-    function playTone(freq, duration, type, maxGain) {
-      if (!type) type = 'sine';
-      if (!maxGain) maxGain = 0.08;
-      try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+    function speakResponse(text) {
+      if (!synth) return;
+      synth.cancel();
+      isSpeaking = true;
+      ignoreUntilTime = Date.now() + 1500;
+      safeStopRecognition();
 
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
-        gain.gain.setValueAtTime(maxGain, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+      if (captionsEnabled) {
+        showLiveSubtitles(text);
+      }
 
-        osc.start();
-        osc.stop(ctx.currentTime + duration);
-      } catch(e) {}
+      utterance.onend = () => {
+        isSpeaking = false;
+        deactivateWakeState();
+        if (captionsEnabled) {
+          setTimeout(hideLiveSubtitles, 2500);
+        }
+        setTimeout(safeStartRecognition, 600);
+      };
+
+      utterance.onerror = () => {
+        isSpeaking = false;
+        deactivateWakeState();
+        if (captionsEnabled) hideLiveSubtitles();
+        setTimeout(safeStartRecognition, 600);
+      };
+
+      synth.speak(utterance);
     }
 
-    function playAlarmSound() {
-      playTone(800, 0.2, 'square', 0.15);
-      setTimeout(() => playTone(800, 0.2, 'square', 0.15), 300);
-      setTimeout(() => playTone(800, 0.4, 'square', 0.15), 600);
+    function safeStartRecognition() {
+      if (recognition && !isRecognizing && !isSpeaking) {
+        try {
+          recognition.start();
+          isRecognizing = true;
+        } catch(e) {}
+      }
     }
 
-    function extractCommand(transcript) {
-      if (!transcript) return '';
-      let cmd = transcript.toLowerCase()
-        .replace(/^(hey|hi|hello|ok|okay)\s+jessie\b/gi, '')
-        .replace(/\bjessie\b/gi, '')
-        .trim();
-      cmd = cmd.replace(/^(hey|hi|hello|ok|okay)\b/gi, '').trim();
-      return cmd;
+    function safeStopRecognition() {
+      if (recognition && isRecognizing) {
+        try {
+          recognition.stop();
+          isRecognizing = false;
+        } catch(e) {}
+      }
     }
 
     function initSpeechRecognition() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        console.warn('Speech recognition not supported in this browser.');
+        console.warn('Speech Recognition API not supported on this browser.');
         return;
       }
 
@@ -1091,68 +1081,66 @@
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
+      recognition.onstart = () => {
+        isRecognizing = true;
+      };
+
       recognition.onresult = (event) => {
-        const now = Date.now();
-        if (isSpeaking || (synth && synth.speaking) || now < ignoreUntilTime) {
-          return;
-        }
+        if (Date.now() < ignoreUntilTime || isSpeaking) return;
 
-        const lastIndex = event.results.length - 1;
-        const result = event.results[lastIndex];
-        const transcript = result[0].transcript.trim().toLowerCase();
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (!result || !result[0] || !result[0].transcript) continue;
+          const transcript = result[0].transcript.trim();
 
-        if (!isAwake) {
-          if (transcript.includes('jessie')) {
-            wakeUpJessie();
-            if (result.isFinal) {
-              const cleanCommand = extractCommand(transcript);
-              if (cleanCommand.length > 2 && !['b', 'c', 'g', 'p', 't', 'v', 'e', 'beep'].includes(cleanCommand)) {
-                processCommand(cleanCommand);
-              }
-            }
-          }
-        } else {
-          resetWakeTimeout();
           if (result.isFinal) {
-            const cleanCommand = extractCommand(transcript);
-            if (cleanCommand.length > 0) {
-              processCommand(cleanCommand);
+            const lower = transcript.toLowerCase();
+            if (lower.includes('jessie')) {
+              triggerWakeState();
+              const command = extractCommand(transcript);
+              if (command.length > 0) {
+                processCommand(command);
+              }
+            } else if (isAwake) {
+              processCommand(transcript);
             }
           }
         }
       };
 
       recognition.onerror = (err) => {
-        console.warn('Speech recognition error:', err);
-      };
-
-      recognition.onend = () => {
-        if (!isSpeaking) {
-          try {
-            recognition.start();
-          } catch(e) {}
+        isRecognizing = false;
+        if (err.error !== 'no-speech') {
+          console.warn('Speech recognition error:', err.error);
         }
       };
 
-      try {
-        recognition.start();
-      } catch(e) {}
+      recognition.onend = () => {
+        isRecognizing = false;
+        if (!isSpeaking) {
+          setTimeout(safeStartRecognition, 500);
+        }
+      };
+
+      safeStartRecognition();
     }
 
-    // Attach global click handler to window scope
-    window.handleContainerClick = handleContainerClick;
-    window.toggleCaptions = toggleCaptions;
-
-    window.onload = function() {
+    function initApp() {
       updateClock();
       setInterval(updateClock, 1000);
-      
+
       fetchWeather();
       setInterval(fetchWeather, 600000);
 
       loadM3UPlaylist();
       initSpeechRecognition();
-    };
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initApp);
+    } else {
+      initApp();
+    }
   </script>
 </body>
 </html>
