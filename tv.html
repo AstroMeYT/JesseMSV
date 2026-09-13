@@ -208,6 +208,20 @@
         </div>
       </div>
 
+      <!-- Active Reminders Display Widget -->
+      <div id="remindersBanner" class="pointer-events-auto transition-all duration-300 hidden flex-col items-center gap-2 bg-slate-900/80 border border-purple-500/40 px-5 py-2.5 rounded-2xl text-purple-200 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-md max-w-md w-full">
+        <div class="flex items-center justify-between w-full gap-3 border-b border-purple-500/20 pb-1.5">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-bell text-purple-400 animate-bounce"></i>
+            <span class="font-bold text-white text-xs uppercase tracking-wider">Active Reminders</span>
+          </div>
+          <button onclick="event.stopPropagation(); clearReminders(true);" class="text-slate-400 hover:text-red-400 transition-colors text-[11px] font-medium" title="Clear All Reminders">
+            Clear All
+          </button>
+        </div>
+        <div id="remindersList" class="flex flex-col gap-1.5 w-full text-xs text-slate-300 max-h-28 overflow-y-auto"></div>
+      </div>
+
       <!-- Speech Feedback Banner -->
       <div id="speechStatus" class="pointer-events-auto transition-all duration-500 opacity-0 transform translate-y-2 flex items-center gap-3 bg-purple-950/40 border border-purple-800/40 px-6 py-2.5 rounded-full text-purple-200 text-sm sm:text-base font-medium backdrop-blur-md">
         <i id="statusIcon" class="fas fa-microphone text-purple-400 animate-pulse"></i>
@@ -324,6 +338,7 @@
     let activeTimer = null;
     let timerInterval = null;
     let timerEndTime = 0;
+    let activeReminders = [];
 
     const radioPresets = {
       'klove': {
@@ -714,6 +729,127 @@
       }
     }
 
+    function playReminderChime() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.15); // A5
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.6);
+      } catch (e) {}
+    }
+
+    function setReminder(task, delayInSeconds) {
+      const id = Date.now() + Math.random();
+      const triggerTime = Date.now() + (delayInSeconds * 1000);
+
+      const timeoutId = setTimeout(() => {
+        playReminderChime();
+        speakResponse(`Reminder: ${task}`);
+        showStatus(`Reminder: ${task}`, 'fa-bell');
+        removeReminder(id, false);
+      }, delayInSeconds * 1000);
+
+      const reminderObj = { id, task, triggerTime, timeoutId };
+      activeReminders.push(reminderObj);
+      updateRemindersUI();
+
+      const mins = Math.round(delayInSeconds / 60);
+      const timeDesc = delayInSeconds < 60 ? `${delayInSeconds} seconds` : `${mins} minute${mins > 1 ? 's' : ''}`;
+      speakResponse(`Okay, I'll remind you to ${task} in ${timeDesc}.`);
+    }
+
+    function removeReminder(id, speakConfirm = false) {
+      const index = activeReminders.findIndex(r => r.id === id);
+      if (index !== -1) {
+        clearTimeout(activeReminders[index].timeoutId);
+        const removed = activeReminders.splice(index, 1)[0];
+        updateRemindersUI();
+        if (speakConfirm) {
+          speakResponse(`Cancelled reminder for ${removed.task}.`);
+        }
+      }
+    }
+
+    function clearReminders(speakConfirm = true) {
+      activeReminders.forEach(r => clearTimeout(r.timeoutId));
+      activeReminders = [];
+      updateRemindersUI();
+      if (speakConfirm) {
+        speakResponse("All reminders have been cleared.");
+      }
+    }
+
+    function tellReminders() {
+      if (activeReminders.length === 0) {
+        speakResponse("You have no active reminders.");
+        return;
+      }
+      const reminderDescs = activeReminders.map(r => {
+        const remainingSec = Math.max(0, Math.ceil((r.triggerTime - Date.now()) / 1000));
+        const mins = Math.ceil(remainingSec / 60);
+        return `${r.task} in about ${mins} minute${mins > 1 ? 's' : ''}`;
+      });
+      speakResponse(`Here are your reminders: ${reminderDescs.join(', ')}.`);
+    }
+
+    function updateRemindersUI() {
+      const banner = document.getElementById('remindersBanner');
+      const listEl = document.getElementById('remindersList');
+      if (!banner || !listEl) return;
+
+      if (activeReminders.length === 0) {
+        banner.classList.add('hidden');
+        listEl.innerHTML = '';
+        return;
+      }
+
+      banner.classList.remove('hidden');
+      listEl.innerHTML = activeReminders.map(r => {
+        const remainingSec = Math.max(0, Math.ceil((r.triggerTime - Date.now()) / 1000));
+        const mins = Math.floor(remainingSec / 60);
+        const secs = String(remainingSec % 60).padStart(2, '0');
+        const timeStr = `${mins}:${secs}`;
+        return `
+          <div class="flex items-center justify-between bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-800">
+            <span class="truncate text-white font-medium mr-2">${r.task}</span>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="font-mono text-[11px] text-purple-300">${timeStr}</span>
+              <button onclick="event.stopPropagation(); removeReminder(${r.id}, true);" class="text-slate-400 hover:text-red-400 transition-colors">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    setInterval(updateRemindersUI, 1000);
+
+    async function tellCalendarEvents() {
+      if (!calendarConfig.apiKey || !calendarConfig.calendarId) {
+        speakResponse("Google Calendar is not configured. Please tap the settings icon to add your API key and Calendar ID.");
+        return;
+      }
+
+      showStatus("Checking Google Calendar...", "fa-calendar-days");
+      const events = await fetchGoogleCalendarEvents();
+      if (events === null) {
+        speakResponse("Unable to fetch calendar events. Please verify your Google Calendar API credentials in settings.");
+      } else if (events.length === 0) {
+        speakResponse("You have no calendar events scheduled for today.");
+      } else {
+        speakResponse(`Here are your calendar events for today: ${events.join('. ')}.`);
+      }
+    }
+
     async function triggerGoodMorningRoutine() {
       const now = new Date();
       const options = { weekday: 'long', month: 'long', day: 'numeric' };
@@ -887,14 +1023,83 @@
         return;
       }
 
+      // Greetings & Conversational Queries
+      if (lower === 'hello' || lower === 'hi' || lower === 'hey' || lower === 'hey jessie' || lower === 'jessie') {
+        speakResponse("Hello! How can I help you today?");
+        return;
+      }
+
+      // Time & Date Queries
+      if (lower.includes('what time') || lower === 'time' || lower.includes('current time')) {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        speakResponse(`The current time is ${timeStr}.`);
+        return;
+      }
+
+      if (lower.includes('what date') || lower.includes('what day') || lower === 'date' || lower.includes('today\'s date')) {
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        speakResponse(`Today is ${dateStr}.`);
+        return;
+      }
+
       // Morning Briefing Command
-      if (lower.includes('good morning') || lower.includes('morning routine') || lower.includes('morning summary')) {
+      if (lower.includes('good morning') || lower.includes('morning routine') || lower.includes('morning summary') || lower.includes('daily briefing') || lower.includes('start my day')) {
         triggerGoodMorningRoutine();
         return;
       }
 
+      // Calendar Events Commands (Standalone Voice Queries)
+      if (lower.includes('calendar') || lower.includes('schedule') || lower.includes('agenda') || lower.includes('events today') || lower.includes('my events') || lower.includes('what\'s on my schedule') || lower.includes('what are my events')) {
+        tellCalendarEvents();
+        return;
+      }
+
+      // Reminders Commands (Creating & Querying Reminders)
+      if (lower.includes('remind me') || lower.includes('set a reminder') || lower.includes('add reminder')) {
+        let task = '';
+        let seconds = 0;
+
+        // Matching Pattern 1: "remind me in 5 minutes to take medicine"
+        let matchInFirst = lower.match(/(?:remind me|set a reminder)\s+in\s+(\d+)\s*(second|sec|minute|min|hour|hr)s?\s+to\s+(.+)/i);
+        if (matchInFirst) {
+          const val = parseInt(matchInFirst[1]);
+          const unit = matchInFirst[2].toLowerCase();
+          task = matchInFirst[3].trim();
+          seconds = unit.startsWith('sec') ? val : unit.startsWith('hour') || unit.startsWith('hr') ? val * 3600 : val * 60;
+        } else {
+          // Matching Pattern 2: "remind me to turn off oven in 10 minutes"
+          let matchTaskFirst = lower.match(/(?:remind me|set a reminder|add reminder)(?:\s+to)?\s+(.+?)\s+in\s+(\d+)\s*(second|sec|minute|min|hour|hr)s?/i);
+          if (matchTaskFirst) {
+            task = matchTaskFirst[1].replace(/^to\s+/, '').trim();
+            const val = parseInt(matchTaskFirst[2]);
+            const unit = matchTaskFirst[3].toLowerCase();
+            seconds = unit.startsWith('sec') ? val : unit.startsWith('hour') || unit.startsWith('hr') ? val * 3600 : val * 60;
+          }
+        }
+
+        if (task && seconds > 0) {
+          setReminder(task, seconds);
+          return;
+        } else {
+          speakResponse("Please specify what to remind you about and when, for example: remind me to turn off the oven in 10 minutes.");
+          return;
+        }
+      }
+
+      if (lower.includes('what are my reminders') || lower.includes('list reminders') || lower.includes('show reminders') || lower.includes('check reminders') || lower === 'reminders') {
+        tellReminders();
+        return;
+      }
+
+      if (lower.includes('cancel reminders') || lower.includes('clear reminders') || lower.includes('delete reminders')) {
+        clearReminders(true);
+        return;
+      }
+
       // Strict Radio Commands ("play radio [name]")
-      if (lower.includes('play radio')) {
+      if (lower.includes('play radio') || lower.includes('start radio') || lower.includes('turn on radio')) {
         if (lower.includes('klove') || lower.includes('k-love')) {
           playRadioStation('klove');
           speakResponse("Playing K-LOVE radio.");
@@ -914,9 +1119,15 @@
         }
       }
 
+      // Video Stream M3U Search Commands (Checked BEFORE weather to prevent "play fox weather" from reading weather text)
+      if (lower.includes('play') || lower.includes('watch') || lower.includes('stream') || lower.includes('channel')) {
+        playVideoStream(commandText);
+        return;
+      }
+
       // Timer Commands
       if (lower.includes('timer')) {
-        if (lower.includes('cancel')) {
+        if (lower.includes('cancel') || lower.includes('stop')) {
           cancelTimer(true);
           return;
         }
@@ -931,7 +1142,7 @@
         }
       }
 
-      // Weather Commands
+      // Weather Commands (Handles general inquiries like "What's the weather?")
       if (lower.includes('weather') || lower.includes('temperature') || lower.includes('forecast')) {
         if (weatherData.temp !== null) {
           let response = `It is currently ${weatherData.temp} degrees and ${weatherData.condition} in Marshall.`;
@@ -945,14 +1156,8 @@
         return;
       }
 
-      // Video Stream M3U Search Commands
-      if (lower.includes('play') || lower.includes('watch') || lower.includes('stream') || lower.includes('channel')) {
-        playVideoStream(commandText);
-        return;
-      }
-
       // General Fallback
-      speakResponse(`I heard: ${commandText}. Say 'Good morning', 'play radio K-LOVE', or 'watch live news' for assistance.`);
+      speakResponse(`I heard: ${commandText}. You can ask for weather, radio, time, timers, reminders, or your schedule.`);
     }
 
     function extractCommand(text) {
@@ -960,7 +1165,7 @@
       const lower = text.toLowerCase();
       const index = lower.indexOf('jessie');
       if (index !== -1) {
-        return text.substring(index + 6).trim();
+        return text.substring(index + 6).replace(/^[,\s.]+/, '').trim();
       }
       return text.trim();
     }
@@ -1021,7 +1226,7 @@
       if (!synth) return;
       synth.cancel();
       isSpeaking = true;
-      ignoreUntilTime = Date.now() + 1500;
+      ignoreUntilTime = Date.now() + 60000; // Block mic input while TTS is active
       safeStopRecognition();
 
       const utterance = new SpeechSynthesisUtterance(text);
@@ -1032,21 +1237,19 @@
         showLiveSubtitles(text);
       }
 
-      utterance.onend = () => {
+      const handleSpeechEnd = () => {
         isSpeaking = false;
         deactivateWakeState();
         if (captionsEnabled) {
           setTimeout(hideLiveSubtitles, 2500);
         }
-        setTimeout(safeStartRecognition, 600);
+        // 1.2s grace delay after TTS finishes to let speaker echo clear before re-enabling mic
+        ignoreUntilTime = Date.now() + 1200;
+        setTimeout(safeStartRecognition, 1200);
       };
 
-      utterance.onerror = () => {
-        isSpeaking = false;
-        deactivateWakeState();
-        if (captionsEnabled) hideLiveSubtitles();
-        setTimeout(safeStartRecognition, 600);
-      };
+      utterance.onend = handleSpeechEnd;
+      utterance.onerror = handleSpeechEnd;
 
       synth.speak(utterance);
     }
@@ -1086,7 +1289,7 @@
       };
 
       recognition.onresult = (event) => {
-        if (Date.now() < ignoreUntilTime || isSpeaking) return;
+        if (Date.now() < ignoreUntilTime || isSpeaking || (synth && synth.speaking)) return;
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
